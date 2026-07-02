@@ -64,9 +64,24 @@ from typing import Any
 import httpx
 from tqdm import tqdm
 
-EXPLANATION_RE = re.compile(r"<explanation>(.*?)</explanation>", re.DOTALL | re.IGNORECASE)
-QUOTE_RE = re.compile(r"<quote>(.*?)</quote>", re.DOTALL | re.IGNORECASE)
+EXPLANATION_RE = re.compile(
+    r"<explanation>((?:(?!<explanation>).)*?)</explanation>", re.DOTALL | re.IGNORECASE
+)
+QUOTE_RE = re.compile(r"<quote>((?:(?!<quote>).)*?)</quote>", re.DOTALL | re.IGNORECASE)
 RATING_RE = re.compile(r"<rating>\s*(10|[0-9])\s*</rating>", re.IGNORECASE)
+
+# Lenient fallbacks for models that mangle closing tags (e.g. glm closing
+# <explanation> with </quote>): capture from the opening tag up to the next
+# closing tag, the next known opening tag, or end of text.
+EXPLANATION_LENIENT_RE = re.compile(
+    r"<explanation>\s*(.*?)\s*(?:</\w+>|(?=<(?:quote|rating)\b)|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+QUOTE_LENIENT_RE = re.compile(
+    r"<quote>\s*(.*?)\s*(?:</\w+>|(?=<(?:explanation|rating)\b)|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+RATING_LENIENT_RE = re.compile(r"<rating>\s*(10|[0-9])\b", re.IGNORECASE)
 
 MAX_EXPLANATION_LINES = 3
 
@@ -437,26 +452,33 @@ def extract_message_text(message_content: Any) -> str:
     return ""
 
 
+def last_match(strict_re: re.Pattern[str], lenient_re: re.Pattern[str], text: str) -> str | None:
+    """Last strict match if any, else last lenient match, else None."""
+    matches = strict_re.findall(text) or lenient_re.findall(text)
+    return matches[-1] if matches else None
+
+
 def extract_entry(response_text: str) -> dict[str, Any]:
     """Parse the tagged fields out of a model response.
 
     Takes the last match of each tag so stray drafts earlier in the response
-    are ignored. Missing <rating> or <explanation> tags are an error (and thus
+    are ignored, falling back to lenient regexes when a model mangles closing
+    tags. A missing <rating> or <explanation> tag is an error (and thus
     retried); a missing <quote> tag is treated as an empty quote.
     """
-    rating_matches = RATING_RE.findall(response_text)
-    if not rating_matches:
+    rating_text = last_match(RATING_RE, RATING_LENIENT_RE, response_text)
+    if rating_text is None:
         raise RatingError(f"No <rating> tag in response: {response_text!r}")
-    rating = int(rating_matches[-1])
+    rating = int(rating_text)
 
-    explanation_matches = EXPLANATION_RE.findall(response_text)
-    if not explanation_matches:
+    explanation = last_match(EXPLANATION_RE, EXPLANATION_LENIENT_RE, response_text)
+    if explanation is None:
         raise RatingError(f"No <explanation> tag in response: {response_text!r}")
-    explanation_lines = explanation_matches[-1].strip().splitlines()
+    explanation_lines = explanation.strip().splitlines()
     explanation = "\n".join(explanation_lines[:MAX_EXPLANATION_LINES])
 
-    quote_matches = QUOTE_RE.findall(response_text)
-    quote = quote_matches[-1].strip() if quote_matches else ""
+    quote = last_match(QUOTE_RE, QUOTE_LENIENT_RE, response_text)
+    quote = quote.strip() if quote is not None else ""
 
     return {"rating": rating, "explanation": explanation, "quote": quote}
 
@@ -557,23 +579,34 @@ async def rate_batch(
     semaphore: asyncio.Semaphore,
     batch: list[tuple[int, dict[str, Any], list[tuple[FilterSpec, str]]]],
     progress: tqdm,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
+    """Rate every pending pair in the batch; returns (rows, failed pair count).
+
+    A pair that still fails after all retries is skipped with a warning rather
+    than aborting the run — its rating hole stays in the output row and is
+    picked up again by the next run.
+    """
+
     async def rate_pair(
         line_number: int,
         document: str,
         filter_spec: FilterSpec,
         model: str,
-    ) -> dict[str, Any]:
-        async with semaphore:
-            entry = await call_openrouter(
-                client=client,
-                headers=headers,
-                config=config,
-                filter_spec=filter_spec,
-                model=model,
-                document=document,
-                line_number=line_number,
-            )
+    ) -> dict[str, Any] | None:
+        try:
+            async with semaphore:
+                entry = await call_openrouter(
+                    client=client,
+                    headers=headers,
+                    config=config,
+                    filter_spec=filter_spec,
+                    model=model,
+                    document=document,
+                    line_number=line_number,
+                )
+        except RatingError as exc:
+            tqdm.write(f"WARNING: {exc}\n  -> pair left unrated; a rerun will retry it.")
+            entry = None
         progress.update(1)
         return entry
 
@@ -585,16 +618,18 @@ async def rate_batch(
             tasks.append(rate_pair(line_number, row["text"], filter_spec, model))
 
     entries = await asyncio.gather(*tasks)
+    failed_pairs = sum(1 for entry in entries if entry is None)
 
     new_by_row: dict[int, dict[tuple[str, str], dict[str, Any]]] = {}
     for (batch_index, filter_name, model), entry in zip(task_owners, entries, strict=True):
-        new_by_row.setdefault(batch_index, {})[(filter_name, model)] = entry
+        if entry is not None:
+            new_by_row.setdefault(batch_index, {})[(filter_name, model)] = entry
 
     rated_rows: list[dict[str, Any]] = []
     for batch_index, (_, row, _) in enumerate(batch):
         merge_ratings(row, config, new_by_row.get(batch_index, {}))
         rated_rows.append(row)
-    return rated_rows
+    return rated_rows, failed_pairs
 
 
 def count_pending_calls(config: Config, resume_rows: int, salvage: SalvageMap) -> int:
@@ -773,6 +808,7 @@ async def rate_jsonl(config: Config) -> None:
     docs_started = 0
     docs_completed = 0
     rows_appended = 0
+    failed_pairs_total = 0
     batch: list[tuple[int, dict[str, Any], list[tuple[FilterSpec, str]]]] = []
     start_time = time.monotonic()
     semaphore = asyncio.Semaphore(config.max_concurrent_requests)
@@ -784,10 +820,10 @@ async def rate_jsonl(config: Config) -> None:
                 with tqdm(total=pending_total, unit="call", desc="Filter rating") as progress:
 
                     async def flush_batch() -> None:
-                        nonlocal batch, docs_completed, rows_appended
+                        nonlocal batch, docs_completed, rows_appended, failed_pairs_total
                         if not batch:
                             return
-                        rated_rows = await rate_batch(
+                        rated_rows, failed_pairs = await rate_batch(
                             client=client,
                             headers=headers,
                             config=config,
@@ -795,6 +831,7 @@ async def rate_jsonl(config: Config) -> None:
                             batch=batch,
                             progress=progress,
                         )
+                        failed_pairs_total += failed_pairs
                         for rated_row in rated_rows:
                             write_jsonl_row(config, output_file, rated_row)
                             rows_appended += 1
@@ -853,6 +890,11 @@ async def rate_jsonl(config: Config) -> None:
         f"rated {docs_completed} documents "
         f"(up to {calls_per_doc} calls each) in {elapsed:.1f}s."
     )
+    if failed_pairs_total:
+        print(
+            f"WARNING: {failed_pairs_total} (filter, model) pairs failed all retries "
+            "and were left unrated. Run the script again to retry just those pairs."
+        )
     print_rating_histograms(config)
 
 
