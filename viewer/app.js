@@ -5,17 +5,26 @@ const DATA_URLS = [
 const LEGACY_FILTER = "philosophy_of_mind";
 const LEGACY_MODEL = "(legacy)";
 
+const CONFIG_URL = "../config.json";
+
 const state = {
   documents: [],
   visible: [],
   selectedIndex: 0,
   filterName: "",
   ratingFilter: "all",
+  promptPaths: {}, // filter name -> prompt file path (from config.json)
+  promptCache: {}, // filter name -> fetched prompt text
 };
 
 const els = {
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
+  promptButton: document.getElementById("promptButton"),
+  promptModal: document.getElementById("promptModal"),
+  promptModalTitle: document.getElementById("promptModalTitle"),
+  promptModalText: document.getElementById("promptModalText"),
+  promptModalClose: document.getElementById("promptModalClose"),
   prevButton: document.getElementById("prevButton"),
   nextButton: document.getElementById("nextButton"),
   positionText: document.getElementById("positionText"),
@@ -417,6 +426,55 @@ function render() {
   renderDocument();
 }
 
+/* ---------- Classifier prompt modal ---------- */
+
+async function loadPromptPaths() {
+  try {
+    const response = await fetch(`${CONFIG_URL}?t=${Date.now()}`);
+    if (!response.ok) return;
+    const config = await response.json();
+    for (const filter of config.filters ?? []) {
+      if (typeof filter?.name === "string" && typeof filter?.prompt_path === "string") {
+        state.promptPaths[filter.name] = filter.prompt_path;
+      }
+    }
+  } catch {
+    // Non-fatal: the button will report that no prompt is available.
+  }
+}
+
+async function fetchPromptText(filterName) {
+  if (filterName in state.promptCache) {
+    return state.promptCache[filterName];
+  }
+
+  const path = state.promptPaths[filterName];
+  let text = `No prompt file is known for the filter "${filterName}".`;
+  if (path) {
+    try {
+      const response = await fetch(`../${path}?t=${Date.now()}`);
+      text = response.ok
+        ? await response.text()
+        : `Could not load ${path} (HTTP ${response.status}).`;
+    } catch (error) {
+      text = `Could not load ${path}: ${error.message}`;
+    }
+  }
+  state.promptCache[filterName] = text;
+  return text;
+}
+
+async function openPromptModal() {
+  els.promptModalTitle.textContent = `Classifier prompt — ${state.filterName}`;
+  els.promptModalText.textContent = "Loading prompt…";
+  els.promptModal.hidden = false;
+  els.promptModalText.textContent = await fetchPromptText(state.filterName);
+}
+
+function closePromptModal() {
+  els.promptModal.hidden = true;
+}
+
 function moveSelection(delta) {
   if (state.visible.length === 0) return;
   state.selectedIndex = Math.max(
@@ -436,7 +494,17 @@ function bindEvents() {
   els.prevButton.addEventListener("click", () => moveSelection(-1));
   els.nextButton.addEventListener("click", () => moveSelection(1));
 
+  els.promptButton.addEventListener("click", openPromptModal);
+  els.promptModalClose.addEventListener("click", closePromptModal);
+  els.promptModal.addEventListener("click", (event) => {
+    if (event.target === els.promptModal) closePromptModal();
+  });
+
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.promptModal.hidden) {
+      closePromptModal();
+      return;
+    }
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
       return;
     }
@@ -482,6 +550,7 @@ async function loadDocuments() {
 
 async function main() {
   bindEvents();
+  loadPromptPaths();
   try {
     await loadDocuments();
     populateFilterControls();

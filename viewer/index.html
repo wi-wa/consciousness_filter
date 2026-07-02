@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=4" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <main class="app-shell">
@@ -16,6 +16,10 @@
         </div>
 
         <div class="toolbar" aria-label="Document controls">
+          <button id="promptButton" class="prompt-link" type="button" title="Show the prompt models are fed for this filter">
+            see prompt
+          </button>
+
           <label class="control control-primary">
             <span>Filter</span>
             <select id="filterSelect"></select>
@@ -62,6 +66,20 @@
       </section>
     </main>
 
-    <script src="./app.js?v=4"></script>
+    <div id="promptModal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="promptModalTitle">
+        <div class="modal-head">
+          <h3 id="promptModalTitle">Classifier prompt</h3>
+          <button id="promptModalClose" class="icon-button" type="button" title="Close (Esc)">&times;</button>
+        </div>
+        <pre id="promptModalText" class="modal-text"></pre>
+        <div class="modal-foot">
+          The rating script appends standard output-format instructions
+          (&lt;explanation&gt;, &lt;quote&gt;, &lt;rating&gt; tags) after the document.
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js?v=5"></script>
   </body>
 </html>
