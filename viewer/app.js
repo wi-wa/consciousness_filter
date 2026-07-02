@@ -11,14 +11,11 @@ const state = {
   selectedIndex: 0,
   filterName: "",
   ratingFilter: "all",
-  searchQuery: "",
 };
 
 const els = {
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
-  ratingSelect: document.getElementById("ratingSelect"),
-  searchInput: document.getElementById("searchInput"),
   prevButton: document.getElementById("prevButton"),
   nextButton: document.getElementById("nextButton"),
   positionText: document.getElementById("positionText"),
@@ -156,7 +153,6 @@ function formatNumber(value) {
 }
 
 function applyFilters() {
-  const query = state.searchQuery.trim().toLowerCase();
   const ratingFilter = state.ratingFilter;
 
   let docs = state.documents.filter((doc) => {
@@ -165,9 +161,6 @@ function applyFilters() {
       return false;
     }
     if (ratingFilter !== "all" && Math.round(mean) !== Number(ratingFilter)) {
-      return false;
-    }
-    if (query && !doc.text.toLowerCase().includes(query)) {
       return false;
     }
     return true;
@@ -237,7 +230,6 @@ function renderHistogram() {
       );
       button.addEventListener("click", () => {
         state.ratingFilter = isSelected ? "all" : String(bin);
-        els.ratingSelect.value = state.ratingFilter;
         state.selectedIndex = 0;
         render();
       });
@@ -437,18 +429,6 @@ function moveSelection(delta) {
 function bindEvents() {
   els.filterSelect.addEventListener("change", () => {
     state.filterName = els.filterSelect.value;
-    state.selectedIndex = 0;
-    render();
-  });
-
-  els.ratingSelect.addEventListener("change", () => {
-    state.ratingFilter = els.ratingSelect.value;
-    state.selectedIndex = 0;
-    render();
-  });
-
-  els.searchInput.addEventListener("input", () => {
-    state.searchQuery = els.searchInput.value;
     state.selectedIndex = 0;
     render();
   });

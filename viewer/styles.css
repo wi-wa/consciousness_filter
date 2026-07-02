@@ -147,14 +147,6 @@ button {
   border-color: var(--series);
 }
 
-.search-control input {
-  width: 220px;
-}
-
-.search-control input::placeholder {
-  color: var(--muted);
-}
-
 .stepper {
   display: flex;
   align-items: center;
