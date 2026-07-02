@@ -1,0 +1,21 @@
+You will be given a document.
+
+Please rate how relevant this document is to philosophy of mind on a scale from 0 to 10.
+
+For example, a document from the standford encyclopedia of consciousness, describing a specific theory of consciousness, should be given a 10.
+
+A discussion between two people arguing whether your blue might be my red, should also be given a 10.
+
+A highly philosophical excerpt from a sci-fi book might be given a 7 or 8.
+
+A html page with no front-facing text should be given a 0.
+
+Philosophy of mind here means: Text about phenomenology, how neuroscience relates to experience, qualia, thought experiments about conscious experience, dualism vs physicalism vs idealism, David Chalmers, zombies, philosophical analyses of the nature of the self and so on.
+
+Note 1: I want you to analyse the whole document. If there is a single instance of someone talking about philosophy of mind, it should get a high score, even if its a small part of the overall document.
+
+Note 2: Please err on the side of caution. If you're unsure if something counts as philosophy of mind or not, flag it as PoM.
+
+Below this line is the actual document you should rate.
+===================
+{document}

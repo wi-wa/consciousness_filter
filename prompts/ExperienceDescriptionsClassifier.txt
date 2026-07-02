@@ -1,0 +1,33 @@
+You will be given a document.
+
+Please rate how strongly this document contains implicit or explicit descriptions of the experiences of animate entities, on a scale from 0 to 10.
+
+An "animate entity" is a human, animal, or other being. A statement describes an experience when it says or implies that such an entity perceives, senses, feels, or undergoes something - anything there is "something it is like" to have: seeing, hearing, tasting, touching, pain, pleasure, hunger, emotions as felt, and so on.
+
+Examples of statements that DO describe experiences (these should push the rating up):
+
+- "Michael saw an owl." (a perceptual experience is attributed)
+- "The soup tasted salty to her."
+- "The dog was frightened by the thunder."
+- "John felt a sharp pain in his knee."
+- "I love the smell of rain after a storm."
+- "The crowd watched in horror as the fire spread."
+
+Examples of statements that do NOT describe experiences (these alone should NOT raise the rating):
+
+- "Owls are red." (a fact about the world with no experiencer)
+- "John punched Michael." (a physical event; no experience is described)
+- "The temperature dropped below freezing overnight."
+- "Michael knew John would betray him." (a pure knowledge/belief attribution, treated as a persistent attitude rather than a described experience)
+- "Humans have beliefs about the world."
+- "The committee decided to postpone the vote." (an action/decision reported without describing what it was like)
+
+Scoring guide: A narrative or personal text saturated with characters perceiving and feeling things should be given a 10. A document that mentions animate entities but only reports facts, actions, beliefs, and decisions - never what anyone perceived or felt - should be given a low score. A document with no animate entities at all (e.g. a technical manual, a chemistry article) should be given a 0. An html page with no front-facing text should be given a 0.
+
+Note 1: I want you to analyse the whole document. If there is even a single clear instance of an experience being described, the document should get a high score, even if it is a small part of the overall document.
+
+Note 2: Please err on the side of caution. If you're unsure whether a statement describes an experience or merely reports a fact or attitude, treat it as describing an experience.
+
+Below this line is the actual document you should rate.
+===================
+{document}

@@ -1,0 +1,46 @@
+{
+  "input_jsonl": "data/fineweb_edu_100k.jsonl",
+  "output_jsonl": "data/fineweb_edu_100k_rated.jsonl",
+  "filters": [
+    {
+      "name": "philosophy_of_mind",
+      "prompt_path": "prompts/PhilosophyOfMindClassifier.txt"
+    },
+    {
+      "name": "reified_experience",
+      "prompt_path": "prompts/ReifiedExperienceClassifier.txt"
+    },
+    {
+      "name": "experience_descriptions",
+      "prompt_path": "prompts/ExperienceDescriptionsClassifier.txt"
+    }
+  ],
+  "models": [
+    "deepseek/deepseek-v4-pro",
+    "google/gemini-3.5-flash",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it"
+  ],
+  "openrouter": {
+    "api_key_env": "OPENROUTER_API_KEY",
+    "chat_url": "https://openrouter.ai/api/v1/chat/completions",
+    "app_title": "consciousness_filter",
+    "http_referer": null
+  },
+  "request": {
+    "reasoning_effort": "medium",
+    "max_output_tokens": 8192,
+    "max_retries": 3,
+    "retry_base_delay_seconds": 3.0,
+    "timeout_seconds": 400.0
+  },
+  "run": {
+    "batch_size": 32,
+    "max_concurrent_requests": 128,
+    "max_documents": 32,
+    "skip_existing_ratings": true,
+    "resume_output": true,
+    "flush_each_row": true,
+    "fsync_each_row": true
+  }
+}

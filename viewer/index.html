@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Consciousness Filter — Rated Documents</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="title-block">
+          <h1>Consciousness Filter</h1>
+          <div id="statusText" class="status-text">Loading rated documents&hellip;</div>
+        </div>
+
+        <div class="toolbar" aria-label="Document controls">
+          <label class="control">
+            <span>Filter</span>
+            <select id="filterSelect"></select>
+          </label>
+
+          <label class="control">
+            <span>Sort</span>
+            <select id="sortSelect">
+              <option value="rating-desc">Mean rating &darr;</option>
+              <option value="rating-asc">Mean rating &uarr;</option>
+              <option value="original">Original order</option>
+            </select>
+          </label>
+
+          <label class="control">
+            <span>Mean bin</span>
+            <select id="ratingSelect">
+              <option value="all">All</option>
+              <option value="10">10</option>
+              <option value="9">9</option>
+              <option value="8">8</option>
+              <option value="7">7</option>
+              <option value="6">6</option>
+              <option value="5">5</option>
+              <option value="4">4</option>
+              <option value="3">3</option>
+              <option value="2">2</option>
+              <option value="1">1</option>
+              <option value="0">0</option>
+            </select>
+          </label>
+
+          <label class="control search-control">
+            <span>Search</span>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="Find in document text" />
+          </label>
+
+          <div class="stepper" aria-label="Document navigation">
+            <button id="prevButton" class="icon-button" type="button" title="Previous document (&larr;)">&larr;</button>
+            <output id="positionText" class="position-text">0 / 0</output>
+            <button id="nextButton" class="icon-button" type="button" title="Next document (&rarr;)">&rarr;</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="chart-card" aria-label="Distribution of mean ratings">
+        <div class="chart-head">
+          <h2>Mean rating distribution</h2>
+          <span id="chartSummary" class="chart-summary"></span>
+        </div>
+        <div id="histogram" class="histogram" role="group" aria-label="Documents per mean-rating bin; click a bin to filter"></div>
+        <div id="chartTooltip" class="chart-tooltip" hidden></div>
+      </section>
+
+      <section class="workspace" aria-label="Document browser">
+        <aside class="document-list-panel">
+          <div id="documentList" class="document-list"></div>
+        </aside>
+
+        <article class="document-panel">
+          <div class="document-meta">
+            <div class="document-meta-text">
+              <div id="documentTitle" class="document-title">No document selected</div>
+              <div id="documentSubhead" class="document-subhead"></div>
+            </div>
+            <div class="mean-badge-block">
+              <div id="meanBadge" class="mean-badge">&ndash;</div>
+              <div class="mean-badge-caption">mean</div>
+            </div>
+          </div>
+          <div id="judgementList" class="judgement-list" hidden></div>
+          <pre id="documentText" class="document-text"></pre>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
