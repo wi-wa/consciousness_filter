@@ -10,7 +10,6 @@ const state = {
   visible: [],
   selectedIndex: 0,
   filterName: "",
-  sortMode: "rating-desc",
   ratingFilter: "all",
   searchQuery: "",
 };
@@ -18,7 +17,6 @@ const state = {
 const els = {
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
-  sortSelect: document.getElementById("sortSelect"),
   ratingSelect: document.getElementById("ratingSelect"),
   searchInput: document.getElementById("searchInput"),
   prevButton: document.getElementById("prevButton"),
@@ -175,17 +173,10 @@ function applyFilters() {
     return true;
   });
 
-  if (state.sortMode === "rating-desc") {
-    docs = docs.toSorted(
-      (a, b) => getMean(b) - getMean(a) || a.originalIndex - b.originalIndex,
-    );
-  } else if (state.sortMode === "rating-asc") {
-    docs = docs.toSorted(
-      (a, b) => getMean(a) - getMean(b) || a.originalIndex - b.originalIndex,
-    );
-  } else {
-    docs = docs.toSorted((a, b) => a.originalIndex - b.originalIndex);
-  }
+  // Fixed sort: highest mean rating first.
+  docs = docs.toSorted(
+    (a, b) => getMean(b) - getMean(a) || a.originalIndex - b.originalIndex,
+  );
 
   state.visible = docs;
   state.selectedIndex = Math.min(state.selectedIndex, Math.max(docs.length - 1, 0));
@@ -446,12 +437,6 @@ function moveSelection(delta) {
 function bindEvents() {
   els.filterSelect.addEventListener("change", () => {
     state.filterName = els.filterSelect.value;
-    state.selectedIndex = 0;
-    render();
-  });
-
-  els.sortSelect.addEventListener("change", () => {
-    state.sortMode = els.sortSelect.value;
     state.selectedIndex = 0;
     render();
   });

@@ -138,6 +138,15 @@ button {
   padding: 6px 9px;
 }
 
+.control-primary select {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 9px 12px;
+  min-width: 280px;
+  border-width: 2px;
+  border-color: var(--series);
+}
+
 .search-control input {
   width: 220px;
 }
@@ -315,12 +324,14 @@ button {
 .workspace {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 14px;
 }
 
 .document-list-panel {
+  flex: 0 0 auto;
+  height: 240px;
   min-height: 0;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -400,6 +411,7 @@ button {
 /* ---------- Document panel ---------- */
 
 .document-panel {
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -546,8 +558,7 @@ button {
     height: auto;
   }
 
-  .workspace {
-    grid-template-columns: 1fr;
-    grid-auto-rows: minmax(240px, 60vh);
+  .document-panel {
+    min-height: 60vh;
   }
 }
