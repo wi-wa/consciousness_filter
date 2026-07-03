@@ -37,7 +37,7 @@
   "run": {
     "batch_size": 32,
     "max_concurrent_requests": 128,
-    "max_documents": 32,
+    "max_documents": 512,
     "skip_existing_ratings": true,
     "resume_output": true,
     "flush_each_row": true,
