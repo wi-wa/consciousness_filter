@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=6" />
+    <link rel="stylesheet" href="./styles.css?v=7" />
   </head>
   <body>
     <main class="app-shell">
@@ -18,6 +18,10 @@
         <div class="toolbar" aria-label="Document controls">
           <button id="promptButton" class="prompt-link" type="button" title="Show the prompt models are fed for this filter">
             see prompt
+          </button>
+
+          <button id="annotationsButton" class="prompt-link" type="button" title="Compare hand-annotated samples with the model ratings, sorted by disagreement">
+            hand labels
           </button>
 
           <label class="control control-primary">
@@ -80,6 +84,21 @@
       </div>
     </div>
 
-    <script src="./app.js?v=6"></script>
+    <div id="annotationsModal" class="modal-backdrop" hidden>
+      <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="annotationsModalTitle">
+        <div class="modal-head">
+          <h3 id="annotationsModalTitle">Hand labels vs model ratings</h3>
+          <button id="annotationsModalClose" class="icon-button" type="button" title="Close (Esc)">&times;</button>
+        </div>
+        <div id="annotationsBody" class="annotations-body"></div>
+        <div class="modal-foot">
+          Sorted by disagreement: mean |model rating &minus; hand label| across labeled
+          filters, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
+          samples sort last. Click a row to expand it.
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js?v=7"></script>
   </body>
 </html>

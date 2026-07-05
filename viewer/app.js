@@ -6,6 +6,14 @@ const LEGACY_FILTER = "philosophy_of_mind";
 const LEGACY_MODEL = "(legacy)";
 
 const CONFIG_URL = "../config.json";
+const ANNOTATIONS_URL = "../data/hand_annotated_samples.jsonl";
+
+// Hand-annotation JSONL keys -> rated-output filter names.
+const HUMAN_LABEL_FILTERS = [
+  { key: "pom-rating", filter: "philosophy_of_mind", short: "pom" },
+  { key: "reification-rating", filter: "reified_experience", short: "reif" },
+  { key: "experience-rating", filter: "experience_descriptions", short: "exp" },
+];
 
 const state = {
   documents: [],
@@ -15,6 +23,7 @@ const state = {
   ratingFilter: "all",
   promptPaths: {}, // filter name -> prompt file path (from config.json)
   promptCache: {}, // filter name -> fetched prompt text
+  annotations: null, // lazy-loaded hand-annotated samples joined to documents
 };
 
 const els = {
@@ -25,6 +34,11 @@ const els = {
   promptModalTitle: document.getElementById("promptModalTitle"),
   promptModalText: document.getElementById("promptModalText"),
   promptModalClose: document.getElementById("promptModalClose"),
+  annotationsButton: document.getElementById("annotationsButton"),
+  annotationsModal: document.getElementById("annotationsModal"),
+  annotationsModalTitle: document.getElementById("annotationsModalTitle"),
+  annotationsBody: document.getElementById("annotationsBody"),
+  annotationsModalClose: document.getElementById("annotationsModalClose"),
   prevButton: document.getElementById("prevButton"),
   nextButton: document.getElementById("nextButton"),
   positionText: document.getElementById("positionText"),
@@ -108,12 +122,16 @@ function getEntries(doc) {
   return doc.ratings[state.filterName] ?? null;
 }
 
-function getMean(doc) {
-  const entries = getEntries(doc);
+function getMeanForFilter(doc, filterName) {
+  const entries = doc.ratings[filterName];
   if (!entries) return null;
   const ratings = Object.values(entries).map((entry) => entry.rating);
   if (ratings.length === 0) return null;
   return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+}
+
+function getMean(doc) {
+  return getMeanForFilter(doc, state.filterName);
 }
 
 function getBin(doc) {
@@ -351,6 +369,48 @@ function renderList() {
 
 /* ---------- Document detail ---------- */
 
+function buildJudgementCard(model, entry) {
+  const card = document.createElement("div");
+  card.className = "judgement";
+
+  const header = document.createElement("div");
+  header.className = "judgement-header";
+
+  const name = document.createElement("span");
+  name.className = "judgement-model";
+  name.textContent = model;
+
+  const meter = document.createElement("div");
+  meter.className = "judgement-meter";
+  const fill = document.createElement("div");
+  fill.className = "judgement-meter-fill";
+  fill.style.width = `${(entry.rating / 10) * 100}%`;
+  meter.append(fill);
+
+  const rating = document.createElement("span");
+  rating.className = "judgement-rating";
+  rating.textContent = String(entry.rating);
+
+  header.append(name, meter, rating);
+  card.append(header);
+
+  if (entry.explanation) {
+    const explanation = document.createElement("div");
+    explanation.className = "judgement-explanation";
+    explanation.textContent = entry.explanation;
+    card.append(explanation);
+  }
+
+  if (entry.quote) {
+    const quote = document.createElement("blockquote");
+    quote.className = "judgement-quote";
+    quote.textContent = entry.quote;
+    card.append(quote);
+  }
+
+  return card;
+}
+
 function renderJudgements(doc) {
   const entries = getEntries(doc);
   if (!entries || Object.keys(entries).length === 0) {
@@ -361,47 +421,7 @@ function renderJudgements(doc) {
 
   els.judgementList.hidden = false;
   els.judgementList.replaceChildren(
-    ...Object.entries(entries).map(([model, entry]) => {
-      const card = document.createElement("div");
-      card.className = "judgement";
-
-      const header = document.createElement("div");
-      header.className = "judgement-header";
-
-      const name = document.createElement("span");
-      name.className = "judgement-model";
-      name.textContent = model;
-
-      const meter = document.createElement("div");
-      meter.className = "judgement-meter";
-      const fill = document.createElement("div");
-      fill.className = "judgement-meter-fill";
-      fill.style.width = `${(entry.rating / 10) * 100}%`;
-      meter.append(fill);
-
-      const rating = document.createElement("span");
-      rating.className = "judgement-rating";
-      rating.textContent = String(entry.rating);
-
-      header.append(name, meter, rating);
-      card.append(header);
-
-      if (entry.explanation) {
-        const explanation = document.createElement("div");
-        explanation.className = "judgement-explanation";
-        explanation.textContent = entry.explanation;
-        card.append(explanation);
-      }
-
-      if (entry.quote) {
-        const quote = document.createElement("blockquote");
-        quote.className = "judgement-quote";
-        quote.textContent = entry.quote;
-        card.append(quote);
-      }
-
-      return card;
-    }),
+    ...Object.entries(entries).map(([model, entry]) => buildJudgementCard(model, entry)),
   );
 }
 
@@ -498,6 +518,177 @@ function closePromptModal() {
   els.promptModal.hidden = true;
 }
 
+/* ---------- Hand-annotation comparison modal ---------- */
+
+// Hand labels are binary (0 = negative, 1 = positive); map them to the 0/10
+// poles of the model scale. Values above 1 are taken as already on the 0-10
+// scale, in case labeling ever switches to it.
+function humanTarget(label) {
+  return label <= 1 ? label * 10 : label;
+}
+
+async function loadAnnotations() {
+  if (state.annotations) return state.annotations;
+
+  const response = await fetch(`${ANNOTATIONS_URL}?t=${Date.now()}`);
+  if (!response.ok) {
+    throw new Error(`Could not load ${ANNOTATIONS_URL} (HTTP ${response.status}).`);
+  }
+  const text = await response.text();
+
+  const byText = new Map(state.documents.map((doc) => [doc.text, doc]));
+  const items = [];
+  let badLines = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      badLines += 1;
+      continue;
+    }
+    if (typeof row?.text !== "string" || row.text.length === 0) continue;
+
+    let doc = byText.get(row.text) ?? null;
+    if (!doc) {
+      // Tolerate hand-edited tails: fall back to a long-prefix match.
+      const prefix = row.text.slice(0, 200);
+      doc = state.documents.find((d) => d.text.startsWith(prefix)) ?? null;
+    }
+
+    const categories = [];
+    for (const { key, filter, short } of HUMAN_LABEL_FILTERS) {
+      const human = row[key];
+      if (!Number.isInteger(human) || human < 0) continue; // -1 = not yet labeled
+      const mean = doc ? getMeanForFilter(doc, filter) : null;
+      categories.push({
+        filter,
+        short,
+        human,
+        mean,
+        diff: mean === null ? null : Math.abs(mean - humanTarget(human)),
+      });
+    }
+
+    const diffs = categories.map((c) => c.diff).filter((d) => d !== null);
+    items.push({
+      text: row.text,
+      doc,
+      categories,
+      score: diffs.length > 0
+        ? diffs.reduce((sum, d) => sum + d, 0) / diffs.length
+        : null,
+    });
+  }
+
+  // Most model-vs-human disagreement first; unmatched/unlabeled rows last.
+  items.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  state.annotations = { items, badLines };
+  return state.annotations;
+}
+
+function buildAnnotationItem(item) {
+  const details = document.createElement("details");
+  details.className = "annotation-item";
+
+  const summary = document.createElement("summary");
+  summary.className = "annotation-summary";
+
+  const score = document.createElement("span");
+  score.className = "ann-score";
+  score.textContent = item.score === null ? "n/a" : item.score.toFixed(1);
+  if (item.score !== null && item.score >= 5) score.classList.add("is-high");
+  score.title = "Mean |model rating − hand label| across labeled filters";
+
+  const chips = document.createElement("span");
+  chips.className = "ann-chips";
+  for (const c of item.categories) {
+    const chip = document.createElement("span");
+    chip.className = "ann-chip";
+    chip.textContent = `${c.short} ${c.human}→${c.mean === null ? "?" : formatMean(c.mean)}`;
+    chip.title = `${c.filter}: hand label ${c.human}, model mean ${c.mean === null ? "unknown" : formatMean(c.mean)}`;
+    chips.append(chip);
+  }
+
+  const snippet = document.createElement("span");
+  snippet.className = "ann-snippet";
+  snippet.textContent = summarize(item.text);
+
+  summary.append(score, chips, snippet);
+  details.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "ann-body";
+
+  if (item.categories.length === 0) {
+    const note = document.createElement("div");
+    note.className = "ann-note";
+    note.textContent = "Not yet hand-labeled (all ratings are -1).";
+    body.append(note);
+  }
+  if (!item.doc) {
+    const note = document.createElement("div");
+    note.className = "ann-note";
+    note.textContent =
+      "No matching document found in the rated JSONL, so model reviews are unavailable.";
+    body.append(note);
+  }
+
+  for (const c of item.categories) {
+    const section = document.createElement("div");
+    section.className = "ann-section";
+
+    const head = document.createElement("div");
+    head.className = "ann-section-head";
+    head.textContent =
+      `${c.filter} · hand label ${c.human}` +
+      (c.mean === null
+        ? ""
+        : ` · model mean ${formatMean(c.mean)} · Δ ${c.diff.toFixed(1)}`);
+    section.append(head);
+
+    const entries = item.doc?.ratings[c.filter];
+    if (entries) {
+      for (const [model, entry] of Object.entries(entries)) {
+        section.append(buildJudgementCard(model, entry));
+      }
+    }
+    body.append(section);
+  }
+
+  const pre = document.createElement("pre");
+  pre.className = "ann-doc-text";
+  pre.textContent = item.text;
+  body.append(pre);
+
+  details.append(body);
+  return details;
+}
+
+async function openAnnotationsModal() {
+  els.annotationsModal.hidden = false;
+  els.annotationsBody.textContent = "Loading hand-annotated samples…";
+  try {
+    const { items, badLines } = await loadAnnotations();
+    els.annotationsModalTitle.textContent =
+      `Hand labels vs model ratings (${items.length} samples)`;
+    els.annotationsBody.replaceChildren(...items.map(buildAnnotationItem));
+    if (badLines > 0) {
+      const note = document.createElement("div");
+      note.className = "ann-note";
+      note.textContent = `${badLines} line${badLines === 1 ? "" : "s"} in ${ANNOTATIONS_URL} could not be parsed and ${badLines === 1 ? "was" : "were"} skipped.`;
+      els.annotationsBody.prepend(note);
+    }
+  } catch (error) {
+    els.annotationsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
+  }
+}
+
+function closeAnnotationsModal() {
+  els.annotationsModal.hidden = true;
+}
+
 function moveSelection(delta) {
   if (state.visible.length === 0) return;
   state.selectedIndex = Math.max(
@@ -523,9 +714,19 @@ function bindEvents() {
     if (event.target === els.promptModal) closePromptModal();
   });
 
+  els.annotationsButton.addEventListener("click", openAnnotationsModal);
+  els.annotationsModalClose.addEventListener("click", closeAnnotationsModal);
+  els.annotationsModal.addEventListener("click", (event) => {
+    if (event.target === els.annotationsModal) closeAnnotationsModal();
+  });
+
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.promptModal.hidden) {
       closePromptModal();
+      return;
+    }
+    if (event.key === "Escape" && !els.annotationsModal.hidden) {
+      closeAnnotationsModal();
       return;
     }
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {

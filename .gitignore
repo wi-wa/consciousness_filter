@@ -9,3 +9,4 @@ data/.*.jsonl.tmp
 data/*.jsonl.salvage
 data/*.jsonl.salvage.tmp
 !data/fineweb_edu_100k_rated.jsonl
+!data/hand_annotated_samples.jsonl
