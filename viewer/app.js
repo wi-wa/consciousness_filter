@@ -121,6 +121,16 @@ function getBin(doc) {
   return mean === null ? null : Math.round(mean);
 }
 
+const DISAGREEMENT_THRESHOLD = 5;
+
+function hasHighDisagreement(doc) {
+  const entries = getEntries(doc);
+  if (!entries) return false;
+  const ratings = Object.values(entries).map((entry) => entry.rating);
+  if (ratings.length < 2) return false;
+  return Math.max(...ratings) - Math.min(...ratings) >= DISAGREEMENT_THRESHOLD;
+}
+
 function formatMean(mean) {
   if (mean === null) return "-";
   return Number.isInteger(mean) ? String(mean) : mean.toFixed(1);
@@ -313,11 +323,24 @@ function renderList() {
       snippet.className = "list-snippet";
       snippet.textContent = summarize(doc.text);
 
+      const meanCell = document.createElement("div");
+      meanCell.className = "list-mean-cell";
+
+      if (hasHighDisagreement(doc)) {
+        const flag = document.createElement("span");
+        flag.className = "list-disagreement";
+        flag.textContent = "!";
+        flag.title =
+          `Models disagree by ${DISAGREEMENT_THRESHOLD}+ points on this document`;
+        meanCell.append(flag);
+      }
+
       const mean = document.createElement("div");
       mean.className = "list-mean";
       mean.textContent = formatMean(getMean(doc));
+      meanCell.append(mean);
 
-      button.append(indexEl, snippet, mean);
+      button.append(indexEl, snippet, meanCell);
       return button;
     }),
   );
