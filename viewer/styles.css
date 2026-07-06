@@ -765,11 +765,109 @@ button {
   border-radius: 8px;
 }
 
+/* ---------- Views (home / hand labels / full data) ---------- */
+
+.view[hidden] {
+  display: none !important;
+}
+
+.home-view {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 640px;
+  text-align: center;
+  padding-bottom: 8vh; /* optical centering */
+}
+
+.home-card h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.home-subhead {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.home-buttons {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.home-button {
+  flex: 1 1 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--baseline);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: var(--ink);
+  text-align: left;
+}
+
+.home-button:hover {
+  border-color: var(--series);
+}
+
+.home-button strong {
+  font-size: 16px;
+}
+
+.home-button span {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.labels-view,
+.data-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.labels-body {
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.labels-foot {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ---------- Narrow screens ---------- */
 
 @media (max-width: 900px) {
   .app-shell {
     height: auto;
+  }
+
+  .home-view {
+    min-height: 70vh;
   }
 
   .document-panel {

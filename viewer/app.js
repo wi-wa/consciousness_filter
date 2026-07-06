@@ -21,12 +21,23 @@ const state = {
   selectedIndex: 0,
   filterName: "",
   ratingFilter: "all",
+  labelsFilter: "all", // labels page: which filter's disagreement to show
   promptPaths: {}, // filter name -> prompt file path (from config.json)
   promptCache: {}, // filter name -> fetched prompt text
   annotations: null, // lazy-loaded hand-annotated samples joined to documents
 };
 
+// Resolves once the rated JSONL has loaded (or failed); the labels page waits
+// on this so hand-annotated samples can join against the documents.
+let documentsReady = Promise.resolve();
+
 const els = {
+  homeView: document.getElementById("homeView"),
+  labelsView: document.getElementById("labelsView"),
+  dataView: document.getElementById("dataView"),
+  labelsStatusText: document.getElementById("labelsStatusText"),
+  labelsFilterSelect: document.getElementById("labelsFilterSelect"),
+  labelsBody: document.getElementById("labelsBody"),
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
   promptButton: document.getElementById("promptButton"),
@@ -34,11 +45,6 @@ const els = {
   promptModalTitle: document.getElementById("promptModalTitle"),
   promptModalText: document.getElementById("promptModalText"),
   promptModalClose: document.getElementById("promptModalClose"),
-  annotationsButton: document.getElementById("annotationsButton"),
-  annotationsModal: document.getElementById("annotationsModal"),
-  annotationsModalTitle: document.getElementById("annotationsModalTitle"),
-  annotationsBody: document.getElementById("annotationsBody"),
-  annotationsModalClose: document.getElementById("annotationsModalClose"),
   prevButton: document.getElementById("prevButton"),
   nextButton: document.getElementById("nextButton"),
   positionText: document.getElementById("positionText"),
@@ -518,7 +524,7 @@ function closePromptModal() {
   els.promptModal.hidden = true;
 }
 
-/* ---------- Hand-annotation comparison modal ---------- */
+/* ---------- Hand-annotation comparison page ---------- */
 
 // Hand labels are binary (0 = negative, 1 = positive); map them to the 0/10
 // poles of the model scale. Values above 1 are taken as already on the 0-10
@@ -529,6 +535,12 @@ function humanTarget(label) {
 
 async function loadAnnotations() {
   if (state.annotations) return state.annotations;
+
+  // Without the rated documents the join below matches nothing, so wait for
+  // them; if they failed to load, still show the hand labels on their own.
+  try {
+    await documentsReady;
+  } catch {}
 
   const response = await fetch(`${ANNOTATIONS_URL}?t=${Date.now()}`);
   if (!response.ok) {
@@ -624,7 +636,9 @@ function buildAnnotationItem(item) {
   if (item.categories.length === 0) {
     const note = document.createElement("div");
     note.className = "ann-note";
-    note.textContent = "Not yet hand-labeled (all ratings are -1).";
+    note.textContent = state.labelsFilter === "all"
+      ? "Not yet hand-labeled (all ratings are -1)."
+      : `Not yet hand-labeled for ${state.labelsFilter}.`;
     body.append(note);
   }
   if (!item.doc) {
@@ -666,27 +680,76 @@ function buildAnnotationItem(item) {
   return details;
 }
 
-async function openAnnotationsModal() {
-  els.annotationsModal.hidden = false;
-  els.annotationsBody.textContent = "Loading hand-annotated samples…";
+function populateLabelsFilterControls() {
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "all labeled filters";
+  els.labelsFilterSelect.replaceChildren(
+    all,
+    ...HUMAN_LABEL_FILTERS.map(({ filter }) => {
+      const option = document.createElement("option");
+      option.value = filter;
+      option.textContent = filter;
+      return option;
+    }),
+  );
+  els.labelsFilterSelect.value = state.labelsFilter;
+}
+
+// Restrict each sample to one filter's label and re-sort by that filter's
+// disagreement; samples without that label keep score null and sort last.
+function filterAnnotationItems(items, filterName) {
+  if (filterName === "all") return items;
+  return items
+    .map((item) => {
+      const categories = item.categories.filter((c) => c.filter === filterName);
+      const diff = categories[0]?.diff ?? null;
+      return { ...item, categories, score: diff };
+    })
+    .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1));
+}
+
+let labelsRenderToken = 0;
+
+async function renderLabelsPage() {
+  const token = ++labelsRenderToken;
+  els.labelsStatusText.textContent = "Loading hand-annotated samples…";
+  els.labelsBody.textContent = "Loading hand-annotated samples…";
   try {
     const { items, badLines } = await loadAnnotations();
-    els.annotationsModalTitle.textContent =
-      `Hand labels vs model ratings (${items.length} samples)`;
-    els.annotationsBody.replaceChildren(...items.map(buildAnnotationItem));
+    if (token !== labelsRenderToken) return; // superseded by a newer render
+    const shown = filterAnnotationItems(items, state.labelsFilter);
+    els.labelsStatusText.textContent =
+      `${shown.length} hand-labeled samples · ` +
+      (state.labelsFilter === "all" ? "all labeled filters" : state.labelsFilter);
+    els.labelsBody.replaceChildren(...shown.map(buildAnnotationItem));
     if (badLines > 0) {
       const note = document.createElement("div");
       note.className = "ann-note";
       note.textContent = `${badLines} line${badLines === 1 ? "" : "s"} in ${ANNOTATIONS_URL} could not be parsed and ${badLines === 1 ? "was" : "were"} skipped.`;
-      els.annotationsBody.prepend(note);
+      els.labelsBody.prepend(note);
     }
   } catch (error) {
-    els.annotationsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
+    if (token !== labelsRenderToken) return;
+    els.labelsStatusText.textContent = "Could not load hand labels";
+    els.labelsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
   }
 }
 
-function closeAnnotationsModal() {
-  els.annotationsModal.hidden = true;
+/* ---------- Views ---------- */
+
+function currentView() {
+  if (location.hash.startsWith("#/labels")) return "labels";
+  if (location.hash.startsWith("#/data")) return "data";
+  return "home";
+}
+
+function renderRoute() {
+  const view = currentView();
+  els.homeView.hidden = view !== "home";
+  els.labelsView.hidden = view !== "labels";
+  els.dataView.hidden = view !== "data";
+  if (view === "labels") renderLabelsPage();
 }
 
 function moveSelection(delta) {
@@ -714,22 +777,22 @@ function bindEvents() {
     if (event.target === els.promptModal) closePromptModal();
   });
 
-  els.annotationsButton.addEventListener("click", openAnnotationsModal);
-  els.annotationsModalClose.addEventListener("click", closeAnnotationsModal);
-  els.annotationsModal.addEventListener("click", (event) => {
-    if (event.target === els.annotationsModal) closeAnnotationsModal();
+  els.labelsFilterSelect.addEventListener("change", () => {
+    state.labelsFilter = els.labelsFilterSelect.value;
+    renderLabelsPage();
   });
+
+  window.addEventListener("hashchange", renderRoute);
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.promptModal.hidden) {
       closePromptModal();
       return;
     }
-    if (event.key === "Escape" && !els.annotationsModal.hidden) {
-      closeAnnotationsModal();
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
       return;
     }
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
+    if (currentView() !== "data") {
       return;
     }
     if (event.key === "ArrowLeft") {
@@ -774,9 +837,12 @@ async function loadDocuments() {
 
 async function main() {
   bindEvents();
+  populateLabelsFilterControls();
   loadPromptPaths();
+  documentsReady = loadDocuments();
+  renderRoute();
   try {
-    await loadDocuments();
+    await documentsReady;
     populateFilterControls();
     render();
   } catch (error) {

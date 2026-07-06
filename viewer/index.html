@@ -5,68 +5,109 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=7" />
+    <link rel="stylesheet" href="./styles.css?v=8" />
   </head>
   <body>
     <main class="app-shell">
-      <header class="topbar">
-        <div class="title-block">
+      <section id="homeView" class="view home-view" hidden>
+        <div class="home-card">
           <h1>Consciousness Filter</h1>
-          <div id="statusText" class="status-text">Loading rated documents&hellip;</div>
+          <p class="home-subhead">
+            Documents rated by LLM classifiers for consciousness-related content.
+          </p>
+          <nav class="home-buttons" aria-label="Site sections">
+            <a class="home-button" href="#/labels">
+              <strong>Compare with hand labels</strong>
+              <span>Hand-annotated samples vs model ratings, sorted by disagreement</span>
+            </a>
+            <a class="home-button" href="#/data">
+              <strong>Full data</strong>
+              <span>Browse every rated document with per-model judgements</span>
+            </a>
+          </nav>
         </div>
-
-        <div class="toolbar" aria-label="Document controls">
-          <button id="promptButton" class="prompt-link" type="button" title="Show the prompt models are fed for this filter">
-            see prompt
-          </button>
-
-          <button id="annotationsButton" class="prompt-link" type="button" title="Compare hand-annotated samples with the model ratings, sorted by disagreement">
-            hand labels
-          </button>
-
-          <label class="control control-primary">
-            <span>Filter</span>
-            <select id="filterSelect"></select>
-          </label>
-
-          <div class="stepper" aria-label="Document navigation">
-            <button id="prevButton" class="icon-button" type="button" title="Previous document (&larr;)">&larr;</button>
-            <output id="positionText" class="position-text">0 / 0</output>
-            <button id="nextButton" class="icon-button" type="button" title="Next document (&rarr;)">&rarr;</button>
-          </div>
-        </div>
-      </header>
-
-      <section class="chart-card" aria-label="Distribution of mean ratings">
-        <div class="chart-head">
-          <h2>Mean rating distribution</h2>
-          <span id="chartSummary" class="chart-summary"></span>
-        </div>
-        <div id="histogram" class="histogram" role="group" aria-label="Documents per mean-rating bin; click a bin to filter"></div>
-        <div id="chartTooltip" class="chart-tooltip" hidden></div>
       </section>
 
-      <section class="workspace" aria-label="Document browser">
-        <aside class="document-list-panel">
-          <div id="documentList" class="document-list"></div>
-        </aside>
+      <section id="labelsView" class="view labels-view" hidden>
+        <header class="topbar">
+          <div class="title-block">
+            <h1>Hand labels vs model ratings</h1>
+            <div id="labelsStatusText" class="status-text">Loading hand-annotated samples&hellip;</div>
+          </div>
+          <div class="toolbar" aria-label="Hand-label controls">
+            <a class="prompt-link" href="#/">home</a>
+            <label class="control control-primary">
+              <span>Filter</span>
+              <select id="labelsFilterSelect"></select>
+            </label>
+          </div>
+        </header>
+        <div id="labelsBody" class="annotations-body labels-body"></div>
+        <footer class="labels-foot">
+          Sorted by disagreement: mean |model rating &minus; hand label| across labeled
+          filters, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
+          samples sort last. Click a row to expand it.
+        </footer>
+      </section>
 
-        <article class="document-panel">
-          <div class="document-meta">
-            <div class="document-meta-text">
-              <div id="documentTitle" class="document-title">No document selected</div>
-              <div id="documentSubhead" class="document-subhead"></div>
-            </div>
-            <div class="mean-badge-block">
-              <div id="meanBadge" class="mean-badge">&ndash;</div>
-              <div class="mean-badge-caption">mean</div>
+      <section id="dataView" class="view data-view" hidden>
+        <header class="topbar">
+          <div class="title-block">
+            <h1>Consciousness Filter</h1>
+            <div id="statusText" class="status-text">Loading rated documents&hellip;</div>
+          </div>
+
+          <div class="toolbar" aria-label="Document controls">
+            <a class="prompt-link" href="#/">home</a>
+
+            <button id="promptButton" class="prompt-link" type="button" title="Show the prompt models are fed for this filter">
+              see prompt
+            </button>
+
+            <label class="control control-primary">
+              <span>Filter</span>
+              <select id="filterSelect"></select>
+            </label>
+
+            <div class="stepper" aria-label="Document navigation">
+              <button id="prevButton" class="icon-button" type="button" title="Previous document (&larr;)">&larr;</button>
+              <output id="positionText" class="position-text">0 / 0</output>
+              <button id="nextButton" class="icon-button" type="button" title="Next document (&rarr;)">&rarr;</button>
             </div>
           </div>
-          <div class="document-body">
-            <pre id="documentText" class="document-text"></pre>
-            <div id="judgementList" class="judgement-list" hidden></div>
+        </header>
+
+        <section class="chart-card" aria-label="Distribution of mean ratings">
+          <div class="chart-head">
+            <h2>Mean rating distribution</h2>
+            <span id="chartSummary" class="chart-summary"></span>
           </div>
-        </article>
+          <div id="histogram" class="histogram" role="group" aria-label="Documents per mean-rating bin; click a bin to filter"></div>
+          <div id="chartTooltip" class="chart-tooltip" hidden></div>
+        </section>
+
+        <section class="workspace" aria-label="Document browser">
+          <aside class="document-list-panel">
+            <div id="documentList" class="document-list"></div>
+          </aside>
+
+          <article class="document-panel">
+            <div class="document-meta">
+              <div class="document-meta-text">
+                <div id="documentTitle" class="document-title">No document selected</div>
+                <div id="documentSubhead" class="document-subhead"></div>
+              </div>
+              <div class="mean-badge-block">
+                <div id="meanBadge" class="mean-badge">&ndash;</div>
+                <div class="mean-badge-caption">mean</div>
+              </div>
+            </div>
+            <div class="document-body">
+              <pre id="documentText" class="document-text"></pre>
+              <div id="judgementList" class="judgement-list" hidden></div>
+            </div>
+          </article>
+        </section>
       </section>
     </main>
 
@@ -84,21 +125,6 @@
       </div>
     </div>
 
-    <div id="annotationsModal" class="modal-backdrop" hidden>
-      <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="annotationsModalTitle">
-        <div class="modal-head">
-          <h3 id="annotationsModalTitle">Hand labels vs model ratings</h3>
-          <button id="annotationsModalClose" class="icon-button" type="button" title="Close (Esc)">&times;</button>
-        </div>
-        <div id="annotationsBody" class="annotations-body"></div>
-        <div class="modal-foot">
-          Sorted by disagreement: mean |model rating &minus; hand label| across labeled
-          filters, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
-          samples sort last. Click a row to expand it.
-        </div>
-      </div>
-    </div>
-
-    <script src="./app.js?v=7"></script>
+    <script src="./app.js?v=8"></script>
   </body>
 </html>
