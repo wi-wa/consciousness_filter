@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=8" />
+    <link rel="stylesheet" href="./styles.css?v=9" />
   </head>
   <body>
     <main class="app-shell">
@@ -44,8 +44,8 @@
         </header>
         <div id="labelsBody" class="annotations-body labels-body"></div>
         <footer class="labels-foot">
-          Sorted by disagreement: mean |model rating &minus; hand label| across labeled
-          filters, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
+          Sorted by disagreement: |model rating &minus; hand label| for the selected
+          filter, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
           samples sort last. Click a row to expand it.
         </footer>
       </section>
@@ -125,6 +125,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=8"></script>
+    <script src="./app.js?v=9"></script>
   </body>
 </html>

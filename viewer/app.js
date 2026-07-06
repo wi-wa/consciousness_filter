@@ -21,7 +21,7 @@ const state = {
   selectedIndex: 0,
   filterName: "",
   ratingFilter: "all",
-  labelsFilter: "all", // labels page: which filter's disagreement to show
+  labelsFilter: HUMAN_LABEL_FILTERS[0].filter, // labels page: which filter to show
   promptPaths: {}, // filter name -> prompt file path (from config.json)
   promptCache: {}, // filter name -> fetched prompt text
   annotations: null, // lazy-loaded hand-annotated samples joined to documents
@@ -618,7 +618,7 @@ function buildAnnotationItem(item) {
   for (const c of item.categories) {
     const chip = document.createElement("span");
     chip.className = "ann-chip";
-    chip.textContent = `${c.short} ${c.human}→${c.mean === null ? "?" : formatMean(c.mean)}`;
+    chip.textContent = `hand ${c.human} → model ${c.mean === null ? "?" : formatMean(c.mean)}`;
     chip.title = `${c.filter}: hand label ${c.human}, model mean ${c.mean === null ? "unknown" : formatMean(c.mean)}`;
     chips.append(chip);
   }
@@ -636,9 +636,7 @@ function buildAnnotationItem(item) {
   if (item.categories.length === 0) {
     const note = document.createElement("div");
     note.className = "ann-note";
-    note.textContent = state.labelsFilter === "all"
-      ? "Not yet hand-labeled (all ratings are -1)."
-      : `Not yet hand-labeled for ${state.labelsFilter}.`;
+    note.textContent = `Not yet hand-labeled for ${state.labelsFilter}.`;
     body.append(note);
   }
   if (!item.doc) {
@@ -681,11 +679,7 @@ function buildAnnotationItem(item) {
 }
 
 function populateLabelsFilterControls() {
-  const all = document.createElement("option");
-  all.value = "all";
-  all.textContent = "all labeled filters";
   els.labelsFilterSelect.replaceChildren(
-    all,
     ...HUMAN_LABEL_FILTERS.map(({ filter }) => {
       const option = document.createElement("option");
       option.value = filter;
@@ -699,7 +693,6 @@ function populateLabelsFilterControls() {
 // Restrict each sample to one filter's label and re-sort by that filter's
 // disagreement; samples without that label keep score null and sort last.
 function filterAnnotationItems(items, filterName) {
-  if (filterName === "all") return items;
   return items
     .map((item) => {
       const categories = item.categories.filter((c) => c.filter === filterName);
@@ -720,8 +713,7 @@ async function renderLabelsPage() {
     if (token !== labelsRenderToken) return; // superseded by a newer render
     const shown = filterAnnotationItems(items, state.labelsFilter);
     els.labelsStatusText.textContent =
-      `${shown.length} hand-labeled samples · ` +
-      (state.labelsFilter === "all" ? "all labeled filters" : state.labelsFilter);
+      `${shown.length} hand-labeled samples · ${state.labelsFilter}`;
     els.labelsBody.replaceChildren(...shown.map(buildAnnotationItem));
     if (badLines > 0) {
       const note = document.createElement("div");
