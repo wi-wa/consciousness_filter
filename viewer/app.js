@@ -707,9 +707,9 @@ function filterAnnotationItems(items, filterName) {
 /* ---------- Per-model agreement stats (labels page sidebar) ---------- */
 
 // For one filter, score each model over the hand-annotated documents:
-//   mseHuman  - mean squared error vs the hand labels mapped to 0/10,
+//   maeHuman  - mean absolute error vs the hand labels mapped to 0/10,
 //               over samples that are labeled for this filter
-//   mseOthers - mean squared error vs the mean of the OTHER models' ratings
+//   maeOthers - mean absolute error vs the mean of the OTHER models' ratings
 //               on the same document, over all matched samples
 function computeModelStats(items, filterName) {
   const perModel = new Map(); // model -> {human: number[], others: number[]}
@@ -725,19 +725,19 @@ function computeModelStats(items, filterName) {
       const stats = perModel.get(model) ?? { human: [], others: [] };
       const rating = entries[model].rating;
       if (target !== null) {
-        stats.human.push((rating - target) ** 2);
+        stats.human.push(Math.abs(rating - target));
       }
       const others = models.filter((m) => m !== model);
       if (others.length > 0) {
         const otherMean =
           others.reduce((sum, m) => sum + entries[m].rating, 0) / others.length;
-        stats.others.push((rating - otherMean) ** 2);
+        stats.others.push(Math.abs(rating - otherMean));
       }
       perModel.set(model, stats);
     }
   }
 
-  const mse = (values) =>
+  const mae = (values) =>
     values.length === 0
       ? null
       : values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -745,19 +745,19 @@ function computeModelStats(items, filterName) {
   return [...perModel.entries()]
     .map(([model, stats]) => ({
       model,
-      mseHuman: mse(stats.human),
+      maeHuman: mae(stats.human),
       nHuman: stats.human.length,
-      mseOthers: mse(stats.others),
+      maeOthers: mae(stats.others),
       nOthers: stats.others.length,
     }))
     .sort(
       (a, b) =>
-        (a.mseHuman ?? Infinity) - (b.mseHuman ?? Infinity) ||
+        (a.maeHuman ?? Infinity) - (b.maeHuman ?? Infinity) ||
         a.model.localeCompare(b.model),
     );
 }
 
-function buildModelStatRow(label, mseValue, n) {
+function buildModelStatRow(label, maeValue, n) {
   const row = document.createElement("div");
   row.className = "model-stat-row";
 
@@ -765,17 +765,17 @@ function buildModelStatRow(label, mseValue, n) {
   rowLabel.className = "model-stat-label";
   rowLabel.textContent = label;
 
-  // MSE of 0-10 ratings is bounded by 100; show it as a fraction of that.
+  // MAE of 0-10 ratings is bounded by 10; show it as a fraction of that.
   const meter = document.createElement("div");
   meter.className = "model-stat-meter";
   const fill = document.createElement("div");
   fill.className = "model-stat-meter-fill";
-  fill.style.width = mseValue === null ? "0%" : `${Math.min(100, mseValue)}%`;
+  fill.style.width = maeValue === null ? "0%" : `${Math.min(100, maeValue * 10)}%`;
   meter.append(fill);
 
   const value = document.createElement("span");
   value.className = "model-stat-value";
-  value.textContent = mseValue === null ? "–" : mseValue.toFixed(1);
+  value.textContent = maeValue === null ? "–" : maeValue.toFixed(1);
 
   const count = document.createElement("span");
   count.className = "model-stat-n";
@@ -810,8 +810,8 @@ function renderModelStats(items) {
 
       card.append(
         name,
-        buildModelStatRow("vs you", s.mseHuman, s.nHuman),
-        buildModelStatRow("vs models", s.mseOthers, s.nOthers),
+        buildModelStatRow("vs you", s.maeHuman, s.nHuman),
+        buildModelStatRow("vs models", s.maeOthers, s.nOthers),
       );
       return card;
     }),

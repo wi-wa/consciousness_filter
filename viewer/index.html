@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=10" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
   </head>
   <body>
     <main class="app-shell">
@@ -50,9 +50,9 @@
             </div>
             <div id="modelStatsList" class="model-stats-list"></div>
             <div class="model-stats-foot">
-              <strong>vs you</strong>: mean squared error against your hand labels
+              <strong>vs you</strong>: mean absolute error against your hand labels
               (0 &rarr; 0, 1 &rarr; 10), over samples you have labeled for this filter.
-              <strong>vs models</strong>: MSE against the mean of the other models on
+              <strong>vs models</strong>: MAE against the mean of the other models on
               the same document, over all matched samples. Lower is closer.
             </div>
           </aside>
@@ -140,6 +140,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=10"></script>
+    <script src="./app.js?v=11"></script>
   </body>
 </html>
