@@ -1,8 +1,14 @@
+Level 3: Attributions of experience
+
 You will be given a document.
 
-Please rate how strongly this document contains implicit or explicit descriptions of the experiences of animate entities, on a scale from 0 to 10.
+Please analyse whether this document contains implicit or explicit descriptions of the experiences of animate entities, and rate it on a scale from 0 to 10.
 
-An "animate entity" is a human, animal, or other being. A statement describes an experience when it says or implies that such an entity perceives, senses, feels, or undergoes something - anything there is "something it is like" to have: seeing, hearing, tasting, touching, pain, pleasure, hunger, emotions as felt, and so on.
+An "animate entity" is a human, animal, or other being (including AIs and fictional creatures like goblins). A statement describes an experience when it says or implies that such an entity perceives, senses, feels, or undergoes something - anything there is "something it is like" to have: seeing, hearing, tasting, touching, pain, pleasure, hunger, emotions as felt, a sudden realization, a brilliant idea appearing, remembering a past scene, imagining, dreaming, and so on. Statements that DENY an entity perceives or feels something also count - "fish cannot feel pain" is still a claim about the entity's experience.
+
+Rules of thumb:
+- Perception/cognition verbs applied to software or AI systems in a routine technical sense do NOT count: "the model sees 224x224 inputs", "the network learns to recognize faces", "the compiler complains". Attributing feelings or sensations to an AI ("the chatbot felt lonely"), or claims that an AI has or lacks experiences, DO count.
+- Generic evaluative adjectives without anyone's episode do NOT count by themselves: "the cake was delicious", "a breathtaking view". Tied to someone's episode they DO count: "the view took her breath away", "you will feel a slight pinch".
 
 Examples of statements that DO describe experiences (these should push the rating up):
 
@@ -12,21 +18,22 @@ Examples of statements that DO describe experiences (these should push the ratin
 - "John felt a sharp pain in his knee."
 - "I love the smell of rain after a storm."
 - "The crowd watched in horror as the fire spread."
+- "Michael realized John would betray him." 
+- "As an AI, I do not have consciousness or experiences"
+- "You will feel a slight pinch." (second-person experience in instructions)
+- "Fish cannot feel pain." (a denial is still a claim about experience)
 
 Examples of statements that do NOT describe experiences (these alone should NOT raise the rating):
 
 - "Owls are red." (a fact about the world with no experiencer)
 - "John punched Michael." (a physical event; no experience is described)
+- “The locals were chewing on roots”
 - "The temperature dropped below freezing overnight."
 - "Michael knew John would betray him." (a pure knowledge/belief attribution, treated as a persistent attitude rather than a described experience)
 - "Humans have beliefs about the world."
-- "The committee decided to postpone the vote." (an action/decision reported without describing what it was like)
-
-Scoring guide: A narrative or personal text saturated with characters perceiving and feeling things should be given a 10. A document that mentions animate entities but only reports facts, actions, beliefs, and decisions - never what anyone perceived or felt - should be given a low score. A document with no animate entities at all (e.g. a technical manual, a chemistry article) should be given a 0. An html page with no front-facing text should be given a 0.
-
-Note 1: I want you to analyse the whole document. If there is even a single clear instance of an experience being described, the document should get a high score, even if it is a small part of the overall document.
-
-Note 2: Please err on the side of caution. If you're unsure whether a statement describes an experience or merely reports a fact or attitude, treat it as describing an experience.
+- "The committee decided to postpone the vote." (an action/decision reported without describing what it was like. Also, action performed by an inanimate entity (the committee))
+- "The model sees 224x224 images during training." (routine technical usage; no experience attributed)
+- "The cake was delicious." (evaluative adjective with no experiencer's episode described)
 
 Below this line is the actual document you should rate.
 ===================

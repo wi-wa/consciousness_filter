@@ -36,6 +36,11 @@ Config keys:
   input_jsonl / output_jsonl   paths to the input and rated-output JSONL files
   filters                      list of {name, prompt_path}; prompt files must
                                contain a {document} marker
+  grading_instruction_path     text file appended after every filled prompt,
+                               telling the model the required answer format
+                               (<explanation>, <quote>, <rating>); a {trait}
+                               marker in it is replaced by the filter name
+                               (underscores as spaces)
   models                       list of OpenRouter model slugs; every model
                                rates every document on every filter
   openrouter                   api_key_env, chat_url, app_title, http_referer
@@ -85,15 +90,6 @@ RATING_LENIENT_RE = re.compile(r"<rating>\s*(10|[0-9])\b", re.IGNORECASE)
 
 MAX_EXPLANATION_LINES = 3
 
-OUTPUT_FORMAT_INSTRUCTIONS = """
-===================
-Above is the document you should rate. Respond using exactly this format:
-
-<explanation>1-3 lines (strict limit) explaining why you gave the rating you did</explanation>
-<quote>The exact, verbatim quote of the first passage in the document that caused you to make a positive judgement. Leave this empty if you give a low rating, or if nothing in particular triggered a positive judgement (just a gestalt sense of the document).</quote>
-<rating>an integer from 0 to 10</rating>
-"""
-
 
 class RatingError(RuntimeError):
     pass
@@ -111,6 +107,7 @@ class Config:
     input_jsonl: Path
     output_jsonl: Path
     filters: list[FilterSpec]
+    grading_instruction: str
     models: list[str]
 
     api_key_env: str
@@ -166,6 +163,11 @@ def load_config(config_path: Path) -> Config:
     if len(set(filter_names)) != len(filter_names):
         raise SystemExit(f"Duplicate filter names in config: {filter_names}")
 
+    grading_instruction_path = Path(require(raw, "grading_instruction_path", "top level"))
+    if not grading_instruction_path.exists():
+        raise SystemExit(f"Grading instruction file does not exist: {grading_instruction_path}")
+    grading_instruction = grading_instruction_path.read_text(encoding="utf-8")
+
     models = require(raw, "models", "top level")
     if not isinstance(models, list) or not models or not all(isinstance(m, str) for m in models):
         raise SystemExit("'models' must be a non-empty list of model slugs.")
@@ -184,6 +186,7 @@ def load_config(config_path: Path) -> Config:
         input_jsonl=Path(require(raw, "input_jsonl", "top level")),
         output_jsonl=Path(require(raw, "output_jsonl", "top level")),
         filters=filters,
+        grading_instruction=grading_instruction,
         models=models,
         api_key_env=require(openrouter, "api_key_env", "'openrouter'"),
         chat_url=require(openrouter, "chat_url", "'openrouter'"),
@@ -248,8 +251,12 @@ def get_api_key(config: Config) -> str:
     return api_key
 
 
-def build_prompt(prompt_template: str, document: str) -> str:
-    return prompt_template.replace("{document}", document) + OUTPUT_FORMAT_INSTRUCTIONS
+def build_prompt(prompt_template: str, document: str, grading_instruction: str, trait: str) -> str:
+    return (
+        prompt_template.replace("{document}", document)
+        + "\n"
+        + grading_instruction.replace("{trait}", trait)
+    )
 
 
 def is_valid_rating(value: Any) -> bool:
@@ -533,7 +540,12 @@ async def call_openrouter(
     document: str,
     line_number: int,
 ) -> dict[str, Any]:
-    prompt = build_prompt(filter_spec.prompt_template, document)
+    prompt = build_prompt(
+        filter_spec.prompt_template,
+        document,
+        config.grading_instruction,
+        trait=filter_spec.name.replace("_", " "),
+    )
     payload = make_payload(config, model, prompt)
     last_error: Exception | None = None
 

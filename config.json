@@ -15,11 +15,13 @@
       "prompt_path": "prompts/ExperienceDescriptionsClassifier.txt"
     }
   ],
+  "grading_instruction_path": "prompts/grading_instruction.txt",
   "models": [
     "deepseek/deepseek-v4-pro",
     "google/gemini-3.5-flash",
     "z-ai/glm-5.2",
-    "google/gemma-4-31b-it"
+    "google/gemma-4-31b-it",
+    "x-ai/grok-4.5"
   ],
   "openrouter": {
     "api_key_env": "OPENROUTER_API_KEY",
@@ -35,9 +37,9 @@
     "timeout_seconds": 400.0
   },
   "run": {
-    "batch_size": 32,
-    "max_concurrent_requests": 128,
-    "max_documents": 512,
+    "batch_size": 4,
+    "max_concurrent_requests": 32,
+    "max_documents": 256,
     "skip_existing_ratings": true,
     "resume_output": true,
     "flush_each_row": true,

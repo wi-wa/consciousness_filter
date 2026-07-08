@@ -845,8 +845,16 @@ button {
   gap: 14px;
 }
 
+.labels-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 14px;
+}
+
 .labels-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -856,6 +864,109 @@ button {
 
 .labels-foot {
   font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- Per-model agreement panel (labels page) ---------- */
+
+.model-stats-panel {
+  flex: 0 0 320px;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.model-stats-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.model-stats-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.model-stats-caption {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.model-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--grid);
+  border-radius: 10px;
+}
+
+.model-stat-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.model-stat-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.model-stat-meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--series-track);
+  overflow: hidden;
+}
+
+.model-stat-meter-fill {
+  height: 100%;
+  background: var(--series);
+  border-radius: 3px;
+}
+
+.model-stat-value {
+  min-width: 34px;
+  text-align: right;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-stat-n {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-stats-foot {
+  font-size: 11.5px;
+  line-height: 1.5;
   color: var(--muted);
 }
 
@@ -884,5 +995,14 @@ button {
     border-left: 0;
     border-top: 1px solid var(--grid);
     order: 1;
+  }
+
+  .labels-workspace {
+    flex-direction: column;
+  }
+
+  .model-stats-panel {
+    flex: 0 0 auto;
+    max-height: 45vh;
   }
 }

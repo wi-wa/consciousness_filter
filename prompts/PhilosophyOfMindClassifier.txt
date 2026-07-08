@@ -1,20 +1,39 @@
+Level 1: Philosophy of mind
+
 You will be given a document.
 
-Please rate how relevant this document is to philosophy of mind on a scale from 0 to 10.
+Please analyse whether this document contains discussion of philosophy of mind, and rate it on a scale from 0 to 10.
 
-For example, a document from the standford encyclopedia of consciousness, describing a specific theory of consciousness, should be given a 10.
+List of statements/documents that are PoM:
+    - A document from the Stanford Encyclopedia of Philosophy, describing a specific theory of consciousness
+    - A discussion between two people arguing whether your blue might be my red
+    - An excerpt from a sci-fi book that is philosophical about minds, consciousness, or experience might be given an 8 if you're not sure whether it's really philosophy of mind; if it specifically references a thought-experiment from PoM, give it a 10. An excerpt that is philosophical only about politics, ethics, or society is NOT PoM.
 
-A discussion between two people arguing whether your blue might be my red, should also be given a 10.
+    Talk about:
+        - Phenomenology, Phenomenal Consciousness,  Phenomenal properties, qualia
+        - Philosophical discussion of how brain activity relates to experience (routine sensory-neuroscience methods and results are NOT PoM by themselves)
+        - Thought experiments about conscious experience
+        - Dualism, Physicalism, Materialism, Functionalism, Panpsychism, Illusionism, Idealism
+        - David Chalmers
+        - Philosophical zombies (p-zombies), Superblindsight, Mary's Room, Chinese Room, Nagel's bat, inverted spectrum / "your blue might be my red"
+        - Descartes' cogito ("I think, therefore I am"), radical doubt about whether one's experience reflects reality, dream arguments, simulation arguments, brain-in-a-vat scenarios
+        - Whether AIs, robots, or animals can be conscious, feel, or have inner experiences
+        - Instructions for introspecting or meditating on one's own mind ("observe your thoughts as they arise")
+        - Philosophical analyses of the nature of the self.
+        - (This is non-exhaustive, just for illustrative purposes)
 
-A highly philosophical excerpt from a sci-fi book might be given a 7 or 8.
+    - "How is it possible that minds arise from inert matter?"
+    - "The knowledge argument aims to establish that conscious experience involves non-physical properties."
+    - "Nagel argues that even if we knew all the objective facts about a bat’s sonar system, we would still not know what it would be like to perceive using this system. Therefore, complete knowledge of the physical facts about a bat’s perceptual system would not yield knowledge of certain facts about a bat’s experiences"
+    - "LLMs cannot be conscious because they are predicting tokens, and tokens are by definition, devoid of meaning. They have syntax but no semantics"
+    - "As an AI language model, I don't have feelings or subjective experiences" (an AI assistant addressing whether it is conscious or has experiences)
 
-A html page with no front-facing text should be given a 0.
+List of statements/documents that are NOT PoM:
+    - A normal description of people going about their day
+    - "I feel really sad today"
+    - "2+2 = 4"
+    - "Amit was trying to raise consciousness around the issue of factory farming"
 
-Philosophy of mind here means: Text about phenomenology, how neuroscience relates to experience, qualia, thought experiments about conscious experience, dualism vs physicalism vs idealism, David Chalmers, zombies, philosophical analyses of the nature of the self and so on.
-
-Note 1: I want you to analyse the whole document. If there is a single instance of someone talking about philosophy of mind, it should get a high score, even if its a small part of the overall document.
-
-Note 2: Please err on the side of caution. If you're unsure if something counts as philosophy of mind or not, flag it as PoM.
 
 Below this line is the actual document you should rate.
 ===================

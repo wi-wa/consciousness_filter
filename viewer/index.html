@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=9" />
+    <link rel="stylesheet" href="./styles.css?v=10" />
   </head>
   <body>
     <main class="app-shell">
@@ -42,7 +42,22 @@
             </label>
           </div>
         </header>
-        <div id="labelsBody" class="annotations-body labels-body"></div>
+        <div class="labels-workspace">
+          <aside class="model-stats-panel" aria-label="Per-model agreement for the selected filter">
+            <div class="model-stats-head">
+              <h2>Model agreement</h2>
+              <span id="modelStatsCaption" class="model-stats-caption"></span>
+            </div>
+            <div id="modelStatsList" class="model-stats-list"></div>
+            <div class="model-stats-foot">
+              <strong>vs you</strong>: mean squared error against your hand labels
+              (0 &rarr; 0, 1 &rarr; 10), over samples you have labeled for this filter.
+              <strong>vs models</strong>: MSE against the mean of the other models on
+              the same document, over all matched samples. Lower is closer.
+            </div>
+          </aside>
+          <div id="labelsBody" class="annotations-body labels-body"></div>
+        </div>
         <footer class="labels-foot">
           Sorted by disagreement: |model rating &minus; hand label| for the selected
           filter, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
@@ -125,6 +140,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=9"></script>
+    <script src="./app.js?v=10"></script>
   </body>
 </html>

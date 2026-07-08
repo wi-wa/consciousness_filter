@@ -38,6 +38,8 @@ const els = {
   labelsStatusText: document.getElementById("labelsStatusText"),
   labelsFilterSelect: document.getElementById("labelsFilterSelect"),
   labelsBody: document.getElementById("labelsBody"),
+  modelStatsList: document.getElementById("modelStatsList"),
+  modelStatsCaption: document.getElementById("modelStatsCaption"),
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
   promptButton: document.getElementById("promptButton"),
@@ -702,16 +704,132 @@ function filterAnnotationItems(items, filterName) {
     .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1));
 }
 
+/* ---------- Per-model agreement stats (labels page sidebar) ---------- */
+
+// For one filter, score each model over the hand-annotated documents:
+//   mseHuman  - mean squared error vs the hand labels mapped to 0/10,
+//               over samples that are labeled for this filter
+//   mseOthers - mean squared error vs the mean of the OTHER models' ratings
+//               on the same document, over all matched samples
+function computeModelStats(items, filterName) {
+  const perModel = new Map(); // model -> {human: number[], others: number[]}
+
+  for (const item of items) {
+    const entries = item.doc?.ratings[filterName];
+    if (!entries) continue;
+    const models = Object.keys(entries);
+    const labeled = item.categories.find((c) => c.filter === filterName);
+    const target = labeled ? humanTarget(labeled.human) : null;
+
+    for (const model of models) {
+      const stats = perModel.get(model) ?? { human: [], others: [] };
+      const rating = entries[model].rating;
+      if (target !== null) {
+        stats.human.push((rating - target) ** 2);
+      }
+      const others = models.filter((m) => m !== model);
+      if (others.length > 0) {
+        const otherMean =
+          others.reduce((sum, m) => sum + entries[m].rating, 0) / others.length;
+        stats.others.push((rating - otherMean) ** 2);
+      }
+      perModel.set(model, stats);
+    }
+  }
+
+  const mse = (values) =>
+    values.length === 0
+      ? null
+      : values.reduce((sum, value) => sum + value, 0) / values.length;
+
+  return [...perModel.entries()]
+    .map(([model, stats]) => ({
+      model,
+      mseHuman: mse(stats.human),
+      nHuman: stats.human.length,
+      mseOthers: mse(stats.others),
+      nOthers: stats.others.length,
+    }))
+    .sort(
+      (a, b) =>
+        (a.mseHuman ?? Infinity) - (b.mseHuman ?? Infinity) ||
+        a.model.localeCompare(b.model),
+    );
+}
+
+function buildModelStatRow(label, mseValue, n) {
+  const row = document.createElement("div");
+  row.className = "model-stat-row";
+
+  const rowLabel = document.createElement("span");
+  rowLabel.className = "model-stat-label";
+  rowLabel.textContent = label;
+
+  // MSE of 0-10 ratings is bounded by 100; show it as a fraction of that.
+  const meter = document.createElement("div");
+  meter.className = "model-stat-meter";
+  const fill = document.createElement("div");
+  fill.className = "model-stat-meter-fill";
+  fill.style.width = mseValue === null ? "0%" : `${Math.min(100, mseValue)}%`;
+  meter.append(fill);
+
+  const value = document.createElement("span");
+  value.className = "model-stat-value";
+  value.textContent = mseValue === null ? "–" : mseValue.toFixed(1);
+
+  const count = document.createElement("span");
+  count.className = "model-stat-n";
+  count.textContent = `n=${n}`;
+
+  row.append(rowLabel, meter, value, count);
+  return row;
+}
+
+function renderModelStats(items) {
+  els.modelStatsCaption.textContent = state.labelsFilter;
+  const stats = computeModelStats(items, state.labelsFilter);
+
+  if (stats.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ann-note";
+    empty.textContent =
+      "No model ratings for this filter yet. Run scripts/rerate_hand_annotated.py " +
+      "to rate the hand-annotated samples, then reload.";
+    els.modelStatsList.replaceChildren(empty);
+    return;
+  }
+
+  els.modelStatsList.replaceChildren(
+    ...stats.map((s) => {
+      const card = document.createElement("div");
+      card.className = "model-stat";
+
+      const name = document.createElement("div");
+      name.className = "model-stat-name";
+      name.textContent = s.model;
+
+      card.append(
+        name,
+        buildModelStatRow("vs you", s.mseHuman, s.nHuman),
+        buildModelStatRow("vs models", s.mseOthers, s.nOthers),
+      );
+      return card;
+    }),
+  );
+}
+
 let labelsRenderToken = 0;
 
 async function renderLabelsPage() {
   const token = ++labelsRenderToken;
   els.labelsStatusText.textContent = "Loading hand-annotated samples…";
   els.labelsBody.textContent = "Loading hand-annotated samples…";
+  els.modelStatsList.textContent = "Loading…";
   try {
     const { items, badLines } = await loadAnnotations();
     if (token !== labelsRenderToken) return; // superseded by a newer render
     const shown = filterAnnotationItems(items, state.labelsFilter);
+    renderModelStats(items);
     els.labelsStatusText.textContent =
       `${shown.length} hand-labeled samples · ${state.labelsFilter}`;
     els.labelsBody.replaceChildren(...shown.map(buildAnnotationItem));
@@ -724,6 +842,7 @@ async function renderLabelsPage() {
   } catch (error) {
     if (token !== labelsRenderToken) return;
     els.labelsStatusText.textContent = "Could not load hand labels";
+    els.modelStatsList.replaceChildren();
     els.labelsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
   }
 }
