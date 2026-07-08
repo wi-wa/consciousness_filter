@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=12" />
+    <link rel="stylesheet" href="./styles.css?v=13" />
   </head>
   <body>
     <main class="app-shell">
@@ -76,9 +76,11 @@
               </div>
               <div id="accuracyList" class="accuracy-list"></div>
               <div class="threshold-note">
-                Samples with mean model rating &ge; x are classified 1, below x as 0;
-                the accuracies compare that classification against your hand labels
-                for the selected filter.
+                Mean model rating &ge; x classifies a sample as 1 (caught), below x
+                as 0 (kept). <strong>positive accuracy</strong>: fraction of your
+                hand-label-1 samples classified 1 — the complement is true positives
+                leaking through. <strong>negative %</strong>: fraction of all samples
+                classified 0 — the share of data a filter at this threshold keeps.
               </div>
             </div>
           </aside>
@@ -166,6 +168,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=12"></script>
+    <script src="./app.js?v=13"></script>
   </body>
 </html>

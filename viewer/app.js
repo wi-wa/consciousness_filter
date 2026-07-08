@@ -826,33 +826,29 @@ function renderModelStats(items) {
 
 /* ---------- Classification threshold & accuracy (labels page sidebar) ---------- */
 
-// Classify each hand-labeled sample by the models' mean rating for one
-// filter (mean >= threshold -> 1, else 0) and tally agreement with the
-// binary hand labels, overall and split by the hand label's value.
+// Classify every matched sample by the models' mean rating for one filter
+// (mean >= threshold -> 1, else 0) and report the filtering tradeoff:
+//   posCorrect/posTotal      - positive accuracy: fraction of hand-label-1
+//                              samples classified 1 (the complement is the
+//                              true positives leaking through the filter)
+//   classNegative/classTotal - negative %: fraction of ALL samples classified
+//                              0, i.e. the share of data the filter keeps
 function computeAccuracy(items, filterName, threshold) {
-  const tally = {
-    total: 0, correct: 0,
-    posTotal: 0, posCorrect: 0,
-    negTotal: 0, negCorrect: 0,
-  };
+  const tally = { posTotal: 0, posCorrect: 0, classTotal: 0, classNegative: 0 };
 
   for (const item of items) {
-    const labeled = item.categories.find((c) => c.filter === filterName);
-    if (!labeled || !item.doc) continue;
+    if (!item.doc) continue;
     const mean = getMeanForFilter(item.doc, filterName);
     if (mean === null) continue;
 
     const predicted = mean >= threshold ? 1 : 0;
-    const actual = labeled.human >= 1 ? 1 : 0;
+    tally.classTotal += 1;
+    if (predicted === 0) tally.classNegative += 1;
 
-    tally.total += 1;
-    if (predicted === actual) tally.correct += 1;
-    if (actual === 1) {
+    const labeled = item.categories.find((c) => c.filter === filterName);
+    if (labeled && labeled.human >= 1) {
       tally.posTotal += 1;
       if (predicted === 1) tally.posCorrect += 1;
-    } else {
-      tally.negTotal += 1;
-      if (predicted === 0) tally.negCorrect += 1;
     }
   }
 
@@ -887,9 +883,8 @@ function renderAccuracy() {
   const items = state.annotations?.items ?? [];
   const tally = computeAccuracy(items, state.labelsFilter, threshold);
   els.accuracyList.replaceChildren(
-    buildAccuracyRow("accuracy", tally.correct, tally.total),
-    buildAccuracyRow("positive (hand label 1)", tally.posCorrect, tally.posTotal),
-    buildAccuracyRow("negative (hand label 0)", tally.negCorrect, tally.negTotal),
+    buildAccuracyRow("positive accuracy", tally.posCorrect, tally.posTotal),
+    buildAccuracyRow("negative %", tally.classNegative, tally.classTotal),
   );
 }
 
