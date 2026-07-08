@@ -22,6 +22,7 @@ const state = {
   filterName: "",
   ratingFilter: "all",
   labelsFilter: HUMAN_LABEL_FILTERS[0].filter, // labels page: which filter to show
+  labelsThreshold: 5, // labels page: classify mean >= threshold as 1 (0.1 steps)
   promptPaths: {}, // filter name -> prompt file path (from config.json)
   promptCache: {}, // filter name -> fetched prompt text
   annotations: null, // lazy-loaded hand-annotated samples joined to documents
@@ -40,6 +41,11 @@ const els = {
   labelsBody: document.getElementById("labelsBody"),
   modelStatsList: document.getElementById("modelStatsList"),
   modelStatsCaption: document.getElementById("modelStatsCaption"),
+  thresholdRange: document.getElementById("thresholdRange"),
+  thresholdMinus: document.getElementById("thresholdMinus"),
+  thresholdPlus: document.getElementById("thresholdPlus"),
+  thresholdValue: document.getElementById("thresholdValue"),
+  accuracyList: document.getElementById("accuracyList"),
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
   promptButton: document.getElementById("promptButton"),
@@ -818,6 +824,81 @@ function renderModelStats(items) {
   );
 }
 
+/* ---------- Classification threshold & accuracy (labels page sidebar) ---------- */
+
+// Classify each hand-labeled sample by the models' mean rating for one
+// filter (mean >= threshold -> 1, else 0) and tally agreement with the
+// binary hand labels, overall and split by the hand label's value.
+function computeAccuracy(items, filterName, threshold) {
+  const tally = {
+    total: 0, correct: 0,
+    posTotal: 0, posCorrect: 0,
+    negTotal: 0, negCorrect: 0,
+  };
+
+  for (const item of items) {
+    const labeled = item.categories.find((c) => c.filter === filterName);
+    if (!labeled || !item.doc) continue;
+    const mean = getMeanForFilter(item.doc, filterName);
+    if (mean === null) continue;
+
+    const predicted = mean >= threshold ? 1 : 0;
+    const actual = labeled.human >= 1 ? 1 : 0;
+
+    tally.total += 1;
+    if (predicted === actual) tally.correct += 1;
+    if (actual === 1) {
+      tally.posTotal += 1;
+      if (predicted === 1) tally.posCorrect += 1;
+    } else {
+      tally.negTotal += 1;
+      if (predicted === 0) tally.negCorrect += 1;
+    }
+  }
+
+  return tally;
+}
+
+function buildAccuracyRow(label, correct, total) {
+  const row = document.createElement("div");
+  row.className = "accuracy-row";
+
+  const name = document.createElement("span");
+  name.className = "accuracy-label";
+  name.textContent = label;
+
+  const pct = document.createElement("span");
+  pct.className = "accuracy-pct";
+  pct.textContent = total === 0 ? "–" : `${((correct / total) * 100).toFixed(1)}%`;
+
+  const count = document.createElement("span");
+  count.className = "accuracy-n";
+  count.textContent = `${correct}/${total}`;
+
+  row.append(name, pct, count);
+  return row;
+}
+
+function renderAccuracy() {
+  const threshold = state.labelsThreshold;
+  els.thresholdValue.textContent = `x = ${threshold.toFixed(1)}`;
+  els.thresholdRange.value = String(threshold);
+
+  const items = state.annotations?.items ?? [];
+  const tally = computeAccuracy(items, state.labelsFilter, threshold);
+  els.accuracyList.replaceChildren(
+    buildAccuracyRow("accuracy", tally.correct, tally.total),
+    buildAccuracyRow("positive (hand label 1)", tally.posCorrect, tally.posTotal),
+    buildAccuracyRow("negative (hand label 0)", tally.negCorrect, tally.negTotal),
+  );
+}
+
+function setThreshold(value) {
+  const clamped = Math.min(10, Math.max(0, value));
+  state.labelsThreshold = Math.round(clamped * 10) / 10; // keep clean 0.1 steps
+  renderAccuracy();
+}
+
 let labelsRenderToken = 0;
 
 async function renderLabelsPage() {
@@ -830,6 +911,7 @@ async function renderLabelsPage() {
     if (token !== labelsRenderToken) return; // superseded by a newer render
     const shown = filterAnnotationItems(items, state.labelsFilter);
     renderModelStats(items);
+    renderAccuracy();
     els.labelsStatusText.textContent =
       `${shown.length} hand-labeled samples · ${state.labelsFilter}`;
     els.labelsBody.replaceChildren(...shown.map(buildAnnotationItem));
@@ -843,6 +925,7 @@ async function renderLabelsPage() {
     if (token !== labelsRenderToken) return;
     els.labelsStatusText.textContent = "Could not load hand labels";
     els.modelStatsList.replaceChildren();
+    els.accuracyList.replaceChildren();
     els.labelsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
   }
 }
@@ -891,6 +974,16 @@ function bindEvents() {
   els.labelsFilterSelect.addEventListener("change", () => {
     state.labelsFilter = els.labelsFilterSelect.value;
     renderLabelsPage();
+  });
+
+  els.thresholdRange.addEventListener("input", () => {
+    setThreshold(Number(els.thresholdRange.value));
+  });
+  els.thresholdMinus.addEventListener("click", () => {
+    setThreshold(state.labelsThreshold - 0.1);
+  });
+  els.thresholdPlus.addEventListener("click", () => {
+    setThreshold(state.labelsThreshold + 0.1);
   });
 
   window.addEventListener("hashchange", renderRoute);

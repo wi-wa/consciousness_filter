@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=11" />
+    <link rel="stylesheet" href="./styles.css?v=12" />
   </head>
   <body>
     <main class="app-shell">
@@ -54,6 +54,32 @@
               (0 &rarr; 0, 1 &rarr; 10), over samples you have labeled for this filter.
               <strong>vs models</strong>: MAE against the mean of the other models on
               the same document, over all matched samples. Lower is closer.
+            </div>
+            <div class="threshold-block">
+              <div class="threshold-head">
+                <h2>Classification threshold</h2>
+                <span id="thresholdValue" class="threshold-value"></span>
+              </div>
+              <div class="threshold-controls">
+                <button id="thresholdMinus" class="icon-button" type="button" title="Threshold &minus;0.1">&minus;</button>
+                <input
+                  id="thresholdRange"
+                  class="threshold-range"
+                  type="range"
+                  min="0"
+                  max="10"
+                  step="0.1"
+                  value="5"
+                  aria-label="Classification threshold from 0.0 to 10.0"
+                />
+                <button id="thresholdPlus" class="icon-button" type="button" title="Threshold +0.1">+</button>
+              </div>
+              <div id="accuracyList" class="accuracy-list"></div>
+              <div class="threshold-note">
+                Samples with mean model rating &ge; x are classified 1, below x as 0;
+                the accuracies compare that classification against your hand labels
+                for the selected filter.
+              </div>
             </div>
           </aside>
           <div id="labelsBody" class="annotations-body labels-body"></div>
@@ -140,6 +166,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=11"></script>
+    <script src="./app.js?v=12"></script>
   </body>
 </html>
