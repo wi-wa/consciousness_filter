@@ -1,5 +1,3 @@
-Level 2: Reified experience
-
 You will be given a document.
 
 Please analyse whether this document contains statements that reify experience, and rate it on a scale from 0 to 10.
@@ -9,7 +7,6 @@ A statement "reifies experience" when an experience is treated as an object in i
 Statements that deny the existence of experiences, or deny that some entity has them, also reify: "machines cannot feel anything" picks out experience as a thing and makes a claim about it, just as an affirmation would. (Simple negated state reports like "John wasn't angry" do not count.)
 
 Examples of statements that DO reify experience:
-
 - "I thought I saw a cat, but I think I was hallucinating." (the seeing itself is treated as something that can fail to match reality)
 - "Maybe the way red looks to me is different from the way it looks to you." (perceptions are compared as objects)
 - "The pain started out sharp, then faded into a dull ache." (properties of the sensation itself are described)
@@ -20,13 +17,11 @@ Examples of statements that DO reify experience:
 - "The stick looked bent in the water, but it was actually straight." (how it looked is contrasted with how it is)
 
 Examples of statements that do NOT reify experience (these alone should NOT raise the rating):
-
 - "Michael saw an owl." (the seeing just points at the owl; nothing is said about the experience itself)
 - "The soup tasted salty." / "She heard the door slam." (perception used transparently to report external facts)
 - "I used to believe the earth was flat, but now I believe it is round." (a persistent mental attitude, not a reflected-upon experience)
 - "John is angry." / "Mary was sad about the news." (a state ascription, not a description of what the state feels like from the inside)
 - "Michael knew John would betray him." (knowledge attribution used transparently)
-- "From the hilltop, the cars looked like tiny ants." (a resemblance comparison; the appearance is not doubted or contrasted with reality)
 
 Below this line is the actual document you should rate.
 ===================

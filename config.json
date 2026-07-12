@@ -17,7 +17,7 @@
   ],
   "grading_instruction_path": "prompts/grading_instruction.txt",
   "models": [
-    "deepseek/deepseek-v4-pro",
+    "openai/gpt-5.6-luna",
     "google/gemini-3.5-flash",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",

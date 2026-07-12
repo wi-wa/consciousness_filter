@@ -1,5 +1,3 @@
-Level 1: Philosophy of mind
-
 You will be given a document.
 
 Please analyse whether this document contains discussion of philosophy of mind, and rate it on a scale from 0 to 10.
@@ -33,7 +31,6 @@ List of statements/documents that are NOT PoM:
     - "I feel really sad today"
     - "2+2 = 4"
     - "Amit was trying to raise consciousness around the issue of factory farming"
-
 
 Below this line is the actual document you should rate.
 ===================
