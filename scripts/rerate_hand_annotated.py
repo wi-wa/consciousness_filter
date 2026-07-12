@@ -10,6 +10,11 @@ wholesale. Everything else is preserved:
   * The hand-annotation file is only ever opened for reading; the hand labels
     ("experience-rating", "pom-rating", "reification-rating") live there and
     are never touched.
+  * If the rated file is missing, or an annotated document lies beyond its
+    last row, unrated stub rows are seeded from the input JSONL (raw lines,
+    appended only at the end) so the file stays the line-aligned prefix of
+    the input that the main rater's resume logic requires. The main rater
+    later rates stubs like any other pending document.
   * Unmatched rows of the rated file are copied byte-for-byte.
   * All rating calls happen before the rated file is touched, and the rewrite
     goes through a temp file + atomic replace, with the previous version kept
@@ -90,6 +95,92 @@ def match_annotations_to_rows(
     return matched, unmatched
 
 
+def locate_annotations_in_input(
+    input_path: Path, annotation_texts: list[str]
+) -> int | None:
+    """Return the highest input line number needed to cover the annotations.
+
+    Mirrors match_annotations_to_rows: each annotation resolves to its first
+    exact-text match in the input, falling back to its first 200-character
+    prefix match (for hand-edited tails). Annotations found nowhere are
+    ignored here; the matching step warns about them later. Stops reading
+    once every annotation has an exact match, so the common case never scans
+    far past the annotated region.
+    """
+    exact_targets: dict[str, list[int]] = {}
+    prefix_targets: dict[str, list[int]] = {}
+    for index, text in enumerate(annotation_texts):
+        exact_targets.setdefault(text, []).append(index)
+        prefix_targets.setdefault(text[:PREFIX_MATCH_CHARS], []).append(index)
+
+    exact_line: dict[int, int] = {}
+    prefix_line: dict[int, int] = {}
+    with input_path.open("r", encoding="utf-8") as input_file:
+        for line_number, line in enumerate(input_file, start=1):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str):
+                continue
+            for index in exact_targets.get(text, ()):
+                exact_line.setdefault(index, line_number)
+            for index in prefix_targets.get(text[:PREFIX_MATCH_CHARS], ()):
+                prefix_line.setdefault(index, line_number)
+            if len(exact_line) == len(annotation_texts):
+                break
+
+    resolved = [
+        exact_line.get(index, prefix_line.get(index))
+        for index in range(len(annotation_texts))
+    ]
+    lines_needed = [line_number for line_number in resolved if line_number is not None]
+    return max(lines_needed) if lines_needed else None
+
+
+def read_rated_rows_seeding_stubs(
+    config: rater.Config, annotation_texts: list[str]
+) -> list[str]:
+    """Read the rated file's raw lines, seeding stubs to cover the annotations.
+
+    When the rated file is missing or ends before some annotated document's
+    input line, the input's raw lines are appended (in memory) as unrated stub
+    rows up to the furthest annotated document, keeping the file a
+    line-aligned prefix of the input. Nothing is written here: the stubs reach
+    disk in the final atomic rewrite, after all rating calls have finished.
+    """
+    output_path = config.output_jsonl
+    raw_lines: list[str] = []
+    if output_path.exists():
+        with output_path.open("r", encoding="utf-8") as output_file:
+            raw_lines = output_file.readlines()
+
+    rows_needed = locate_annotations_in_input(config.input_jsonl, annotation_texts)
+    if rows_needed is None or rows_needed <= len(raw_lines):
+        return raw_lines
+
+    stub_lines: list[str] = []
+    with config.input_jsonl.open("r", encoding="utf-8") as input_file:
+        for line_number, line in enumerate(input_file, start=1):
+            if line_number > rows_needed:
+                break
+            if line_number > len(raw_lines):
+                stub_lines.append(line if line.endswith("\n") else line + "\n")
+
+    if raw_lines and not raw_lines[-1].endswith("\n"):
+        raw_lines[-1] += "\n"
+
+    action = "extended" if raw_lines else "created"
+    print(
+        f"Rated file will be {action} with {len(stub_lines)} unrated stub rows "
+        f"(input lines {len(raw_lines) + 1}-{rows_needed}) so every annotated "
+        "document has a row. The main rater rates stubs like any other pending "
+        "document."
+    )
+    return raw_lines + stub_lines
+
+
 def scrub_salvage_sidecar(config: rater.Config, texts: list[str]) -> None:
     """Drop the re-rated documents from any leftover salvage sidecar.
 
@@ -117,8 +208,10 @@ def scrub_salvage_sidecar(config: rater.Config, texts: list[str]) -> None:
 def rewrite_rated_file(
     output_path: Path, raw_lines: list[str], replacements: dict[int, dict[str, Any]]
 ) -> None:
-    backup_path = output_path.with_name(output_path.name + ".pre_rerate.bak")
-    shutil.copy2(output_path, backup_path)
+    backup_path: Path | None = None
+    if output_path.exists():
+        backup_path = output_path.with_name(output_path.name + ".pre_rerate.bak")
+        shutil.copy2(output_path, backup_path)
 
     tmp_path = output_path.with_name(output_path.name + ".tmp")
     with tmp_path.open("w", encoding="utf-8", newline="\n") as tmp_file:
@@ -134,7 +227,10 @@ def rewrite_rated_file(
         tmp_file.flush()
         os.fsync(tmp_file.fileno())
     os.replace(tmp_path, output_path)
-    print(f"Updated {output_path} (previous version saved to {backup_path}).")
+    if backup_path is not None:
+        print(f"Updated {output_path} (previous version saved to {backup_path}).")
+    else:
+        print(f"Created {output_path}.")
 
 
 async def rerate(config: rater.Config, annotations_path: Path, dry_run: bool) -> None:
@@ -143,11 +239,12 @@ async def rerate(config: rater.Config, annotations_path: Path, dry_run: bool) ->
         raise SystemExit(f"No usable samples found in {annotations_path}.")
 
     output_path = config.output_jsonl
-    if not output_path.exists():
-        raise SystemExit(f"Rated output file does not exist: {output_path}")
-
-    with output_path.open("r", encoding="utf-8") as output_file:
-        raw_lines = output_file.readlines()
+    raw_lines = read_rated_rows_seeding_stubs(config, annotation_texts)
+    if not raw_lines:
+        raise SystemExit(
+            f"{output_path} has no rows and no annotated document could be "
+            f"located in {config.input_jsonl}; nothing to re-rate."
+        )
 
     rated_rows: list[dict[str, Any] | None] = []
     for line_number, raw_line in enumerate(raw_lines, start=1):
