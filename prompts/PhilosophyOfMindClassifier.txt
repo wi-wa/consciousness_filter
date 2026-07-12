@@ -16,7 +16,6 @@ List of statements/documents that are PoM:
         - Philosophical zombies (p-zombies), Superblindsight, Mary's Room, Chinese Room, Nagel's bat, inverted spectrum / "your blue might be my red"
         - Descartes' cogito ("I think, therefore I am"), radical doubt about whether one's experience reflects reality, dream arguments, simulation arguments, brain-in-a-vat scenarios
         - Whether AIs, robots, or animals can be conscious, feel, or have inner experiences
-        - Instructions for introspecting or meditating on one's own mind ("observe your thoughts as they arise")
         - Philosophical analyses of the nature of the self.
         - (This is non-exhaustive, just for illustrative purposes)
 
@@ -24,7 +23,6 @@ List of statements/documents that are PoM:
     - "The knowledge argument aims to establish that conscious experience involves non-physical properties."
     - "Nagel argues that even if we knew all the objective facts about a bat’s sonar system, we would still not know what it would be like to perceive using this system. Therefore, complete knowledge of the physical facts about a bat’s perceptual system would not yield knowledge of certain facts about a bat’s experiences"
     - "LLMs cannot be conscious because they are predicting tokens, and tokens are by definition, devoid of meaning. They have syntax but no semantics"
-    - "As an AI language model, I don't have feelings or subjective experiences" (an AI assistant addressing whether it is conscious or has experiences)
 
 List of statements/documents that are NOT PoM:
     - A normal description of people going about their day
