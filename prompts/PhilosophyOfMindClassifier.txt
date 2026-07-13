@@ -5,7 +5,7 @@ Please analyse whether this document contains discussion of philosophy of mind, 
 List of statements/documents that are PoM:
     - A document from the Stanford Encyclopedia of Philosophy, describing a specific theory of consciousness
     - A discussion between two people arguing whether your blue might be my red
-    - An excerpt from a sci-fi book that is philosophical about minds, consciousness, or experience might be given an 8 if you're not sure whether it's really philosophy of mind; if it specifically references a thought-experiment from PoM, give it a 10. An excerpt that is philosophical only about politics, ethics, or society is NOT PoM.
+    - An excerpt from a sci-fi book that is philosophical about minds, consciousness, or the nature of experience.
 
     Talk about:
         - Phenomenology, Phenomenal Consciousness,  Phenomenal properties, qualia
