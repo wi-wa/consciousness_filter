@@ -12,24 +12,24 @@ List of statements/documents that are PoM:
         - Philosophical discussion of how brain activity relates to experience (routine sensory-neuroscience methods and results are NOT PoM by themselves)
         - Thought experiments about conscious experience
         - Dualism, Physicalism, Materialism, Functionalism, Panpsychism, Illusionism, Idealism
-        - David Chalmers
+        - David Chalmers, Hard Problem
         - Philosophical zombies (p-zombies), Superblindsight, Mary's Room, Chinese Room, Nagel's bat, inverted spectrum / "your blue might be my red"
         - Descartes' cogito ("I think, therefore I am"), radical doubt about whether one's experience reflects reality, dream arguments, simulation arguments, brain-in-a-vat scenarios
         - Whether AIs, robots, or animals can be conscious, feel, or have inner experiences
         - Philosophical analyses of the nature of the self.
+        - Talk about immaterial souls, mind-body problem, transmigration, reincarnation
         - (This is non-exhaustive, just for illustrative purposes)
-        - Talk about immaterial soulds, idealism, mind-body problem
 
     - "How is it possible that minds arise from inert matter?"
     - "The knowledge argument aims to establish that conscious experience involves non-physical properties."
-    - "Nagel argues that even if we knew all the objective facts about a bat’s sonar system, we would still not know what it would be like to perceive using this system. Therefore, complete knowledge of the physical facts about a bat’s perceptual system would not yield knowledge of certain facts about a bat’s experiences"
+    - "... therefore, complete knowledge of the physical facts about a bat’s perceptual system would not yield knowledge of certain facts about a bat’s experiences"
     - "LLMs cannot be conscious because they are predicting tokens, and tokens are by definition, devoid of meaning. They have syntax but no semantics"
 
 List of statements/documents that are NOT PoM:
     - A normal description of people going about their day
     - "I feel really sad today"
-    - "2+2 = 4"
     - "Amit was trying to raise consciousness around the issue of factory farming"
+    - "The Patient regained Consciousness after 17 hours."
 
 Below this line is the actual document you should rate.
 ===================
