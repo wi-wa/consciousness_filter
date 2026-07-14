@@ -15,6 +15,7 @@ Examples of statements that DO reify experience:
 - "No description could convey what the music actually sounded like to him." (the experience is distinguished from any account of its object)
 - "As an AI, I do not have experiences, feelings or emotions" (picking out experiences as objects and ascribing properties to them)
 - "The stick looked bent in the water, but it was actually straight." (how it looked is contrasted with how it is)
+- Claims or narratives in which a mind, soul, or experiencing subject is immaterial, survives bodily death, moves between bodies, or otherwise exists independently of its physical body, including discussion of how it interacts with matter.
 
 Examples of statements that do NOT reify experience (these alone should NOT raise the rating):
 - "Michael saw an owl." (the seeing just points at the owl; nothing is said about the experience itself)
