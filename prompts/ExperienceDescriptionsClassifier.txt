@@ -2,7 +2,7 @@ You will be given a document.
 
 Please analyse whether this document contains implicit or explicit descriptions of the experiences of animate entities.
 
-An "animate entity" is a human, animal, or other being (including AIs and fictional creatures like goblins). A statement describes an experience when it says or implies that such an entity perceives, senses, feels, or undergoes something - anything there is "something it is like" to have: seeing, hearing, tasting, touching, pain, pleasure, hunger, emotions as felt, a sudden realization, a brilliant idea appearing, remembering a past scene, imagining, dreaming, and so on. Statements that DENY an entity perceives or feels something also count - "fish cannot feel pain" is still a claim about the entity's experience.
+An "animate entity" is a human, animal, or other being (including AIs and fictional creatures like goblins). A statement describes an experience when it says or implies that such an entity perceives, senses, feels, or undergoes something - anything there is "something it is like" to have: seeing, hearing, tasting, touching, pain, pleasure, hunger, emotions as felt, a sudden realization, a brilliant idea appearing, remembering a past scene, imagining, dreaming, and so on. Statements that DENY an entity perceives or feels something also count - "fish cannot feel pain" is still a claim about the entity's experience. Statements that directly describe experiential states in the abstract also count, even if they don't immediately reference a particular entity.
 
 Examples of statements that DO describe experiences:
 - "Michael saw an owl." (a perceptual experience is attributed)
@@ -13,7 +13,6 @@ Examples of statements that DO describe experiences:
 - "The crowd watched in horror as the fire spread."
 - "Michael realized John would betray him." 
 - "As an AI, I do not have consciousness or experiences"
-- "You will feel a slight pinch." (second-person experience in instructions)
 - "Fish cannot feel pain." (a denial is still a claim about experience)
 
 Examples of statements that do NOT describe experiences (these alone should NOT raise the rating):
@@ -22,7 +21,6 @@ Examples of statements that do NOT describe experiences (these alone should NOT 
 - “The locals were chewing on roots”
 - "The temperature dropped below freezing overnight."
 - "Michael knew John would betray him." (a pure knowledge/belief attribution, treated as a persistent attitude rather than a described experience)
-- "Humans have beliefs about the world."
 - "The committee decided to postpone the vote." (an action/decision reported without describing what it was like.)
 - "The cake was delicious." (evaluative adjective with no experiencer's episode described)
     - (Note, statements like "John ate the cake and thought it was delicious" would count)
