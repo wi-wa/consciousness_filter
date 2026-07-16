@@ -922,10 +922,29 @@ button {
 }
 
 .model-stat-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 12.5px;
   font-weight: 650;
   color: var(--ink-2);
   overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.model-stat-toggle {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--series);
+}
+
+.model-stat.is-disabled .model-stat-name span,
+.model-stat.is-disabled .model-stat-row {
+  opacity: 0.45;
+}
+
+.judgement.is-disabled {
+  opacity: 0.45;
 }
 
 .model-stat-row {
@@ -965,6 +984,53 @@ button {
 }
 
 .model-stats-foot {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.overall-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+}
+
+.overall-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overall-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.overall-readout {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.overall-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.overall-n {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.overall-note {
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--muted);

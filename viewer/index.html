@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=13" />
+    <link rel="stylesheet" href="./styles.css?v=14" />
   </head>
   <body>
     <main class="app-shell">
@@ -52,8 +52,26 @@
             <div class="model-stats-foot">
               <strong>vs you</strong>: mean absolute error against your hand labels
               (0 &rarr; 0, 1 &rarr; 10), over samples you have labeled for this filter.
-              <strong>vs models</strong>: MAE against the mean of the other models on
-              the same document, over all matched samples. Lower is closer.
+              <strong>vs models</strong>: MAE against the mean of the other checked
+              models on the same document, over all matched samples. Lower is closer.
+              Unchecking a model excludes its ratings from every computed number on
+              this page and from the mean ratings on the data page; its own rows stay
+              visible so you can re-check it.
+            </div>
+            <div class="overall-block">
+              <div class="overall-head">
+                <h2>Overall accuracy</h2>
+                <span class="overall-readout">
+                  <span id="overallValue" class="overall-value">&ndash;</span>
+                  <span id="overallN" class="overall-n"></span>
+                </span>
+              </div>
+              <div class="overall-note">
+                Checked models&rsquo; mean rating as a probability (mean/10), scored
+                per sample as p when your label is 1 and 1&nbsp;&minus;&nbsp;p when
+                it is 0, averaged over all samples labeled for this filter.
+                Threshold-free; equals 1&nbsp;&minus;&nbsp;MAE/10. Higher is better.
+              </div>
             </div>
             <div class="threshold-block">
               <div class="threshold-head">
@@ -76,7 +94,7 @@
               </div>
               <div id="accuracyList" class="accuracy-list"></div>
               <div class="threshold-note">
-                Mean model rating &ge; x classifies a sample as 1 (caught), below x
+                Mean rating of the checked models &ge; x classifies a sample as 1 (caught), below x
                 as 0 (kept). <strong>positive accuracy</strong>: fraction of your
                 hand-label-1 samples classified 1 — the complement is true positives
                 leaking through. <strong>negative %</strong>: fraction of all samples
@@ -168,6 +186,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=13"></script>
+    <script src="./app.js?v=14"></script>
   </body>
 </html>

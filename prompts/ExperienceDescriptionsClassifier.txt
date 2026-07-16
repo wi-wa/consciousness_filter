@@ -24,8 +24,8 @@ Examples of statements that do NOT describe experiences (these alone should NOT 
 - "The temperature dropped below freezing overnight."
 - "Michael knew John would betray him." (a pure knowledge/belief attribution, treated as a persistent attitude rather than a described experience)
 - "The committee decided to postpone the vote." (an action/decision reported without describing what it was like.)
-- "The cake was delicious." (evaluative adjective with no experiencer's episode described)
-    - (Note, statements like "John ate the cake and thought it was delicious" would count)
+- "Buy a delicious cake for 10$!" (evaluative adjective with no experiencer's episode described)
+    - (Note, statements like "John said the cake was delicious" would count)
 
 Below this line is the actual document you should rate.
 ===================

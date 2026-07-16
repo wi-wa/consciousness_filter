@@ -23,6 +23,8 @@ const state = {
   ratingFilter: "all",
   labelsFilter: HUMAN_LABEL_FILTERS[0].filter, // labels page: which filter to show
   labelsThreshold: 5, // labels page: classify mean >= threshold as 1 (0.1 steps)
+  labelsItems: [], // labels page: current filter's items with fresh means/diffs
+  disabledModels: new Set(), // models unchecked in the "Model agreement" box
   promptPaths: {}, // filter name -> prompt file path (from config.json)
   promptCache: {}, // filter name -> fetched prompt text
   annotations: null, // lazy-loaded hand-annotated samples joined to documents
@@ -46,6 +48,8 @@ const els = {
   thresholdPlus: document.getElementById("thresholdPlus"),
   thresholdValue: document.getElementById("thresholdValue"),
   accuracyList: document.getElementById("accuracyList"),
+  overallValue: document.getElementById("overallValue"),
+  overallN: document.getElementById("overallN"),
   statusText: document.getElementById("statusText"),
   filterSelect: document.getElementById("filterSelect"),
   promptButton: document.getElementById("promptButton"),
@@ -136,10 +140,14 @@ function getEntries(doc) {
   return doc.ratings[state.filterName] ?? null;
 }
 
+// Ratings from models unchecked in the "Model agreement" box are excluded
+// from every mean (and everything derived from one).
 function getMeanForFilter(doc, filterName) {
   const entries = doc.ratings[filterName];
   if (!entries) return null;
-  const ratings = Object.values(entries).map((entry) => entry.rating);
+  const ratings = Object.entries(entries)
+    .filter(([model]) => !state.disabledModels.has(model))
+    .map(([, entry]) => entry.rating);
   if (ratings.length === 0) return null;
   return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
 }
@@ -158,7 +166,9 @@ const DISAGREEMENT_THRESHOLD = 5;
 function hasHighDisagreement(doc) {
   const entries = getEntries(doc);
   if (!entries) return false;
-  const ratings = Object.values(entries).map((entry) => entry.rating);
+  const ratings = Object.entries(entries)
+    .filter(([model]) => !state.disabledModels.has(model))
+    .map(([, entry]) => entry.rating);
   if (ratings.length < 2) return false;
   return Math.max(...ratings) - Math.min(...ratings) >= DISAGREEMENT_THRESHOLD;
 }
@@ -263,8 +273,11 @@ function renderHistogram() {
   const total = counts.reduce((sum, count) => sum + count, 0);
   const hasSelection = state.ratingFilter !== "all";
 
+  const unchecked = state.disabledModels.size;
   els.chartSummary.textContent =
-    `${formatNumber(total)} documents · mean across models · ${state.filterName}`;
+    `${formatNumber(total)} documents · mean across models` +
+    (unchecked > 0 ? ` (${unchecked} unchecked)` : "") +
+    ` · ${state.filterName}`;
 
   els.histogram.replaceChildren(
     ...counts.map((count, bin) => {
@@ -422,6 +435,10 @@ function buildJudgementCard(model, entry) {
     card.append(quote);
   }
 
+  if (state.disabledModels.has(model)) {
+    card.classList.add("is-disabled");
+  }
+
   return card;
 }
 
@@ -458,11 +475,14 @@ function renderDocument() {
   }
 
   const entries = getEntries(doc) ?? {};
-  const modelCount = Object.keys(entries).length;
+  const models = Object.keys(entries);
+  const enabledCount = models.filter((m) => !state.disabledModels.has(m)).length;
+  const modelsLabel = enabledCount === models.length
+    ? `${models.length} model${models.length === 1 ? "" : "s"}`
+    : `${enabledCount} of ${models.length} models checked`;
   els.documentTitle.textContent = `Document #${doc.originalIndex}`;
   els.documentSubhead.textContent =
-    `${formatNumber(doc.text.length)} characters · ` +
-    `${modelCount} model${modelCount === 1 ? "" : "s"} · ${state.filterName}`;
+    `${formatNumber(doc.text.length)} characters · ${modelsLabel} · ${state.filterName}`;
   els.meanBadge.textContent = formatMean(getMean(doc));
   els.documentText.textContent = doc.text;
   renderJudgements(doc);
@@ -577,33 +597,17 @@ async function loadAnnotations() {
       doc = state.documents.find((d) => d.text.startsWith(prefix)) ?? null;
     }
 
-    const categories = [];
+    // Only the raw hand labels are stored here; means and diffs are computed
+    // at render time (filterAnnotationItems) so they track the model checkboxes.
+    const labels = [];
     for (const { key, filter, short } of HUMAN_LABEL_FILTERS) {
       const human = row[key];
       if (!Number.isInteger(human) || human < 0) continue; // -1 = not yet labeled
-      const mean = doc ? getMeanForFilter(doc, filter) : null;
-      categories.push({
-        filter,
-        short,
-        human,
-        mean,
-        diff: mean === null ? null : Math.abs(mean - humanTarget(human)),
-      });
+      labels.push({ filter, short, human });
     }
-
-    const diffs = categories.map((c) => c.diff).filter((d) => d !== null);
-    items.push({
-      text: row.text,
-      doc,
-      categories,
-      score: diffs.length > 0
-        ? diffs.reduce((sum, d) => sum + d, 0) / diffs.length
-        : null,
-    });
+    items.push({ text: row.text, doc, labels });
   }
 
-  // Most model-vs-human disagreement first; unmatched/unlabeled rows last.
-  items.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
   state.annotations = { items, badLines };
   return state.annotations;
 }
@@ -698,14 +702,22 @@ function populateLabelsFilterControls() {
   els.labelsFilterSelect.value = state.labelsFilter;
 }
 
-// Restrict each sample to one filter's label and re-sort by that filter's
-// disagreement; samples without that label keep score null and sort last.
+// Restrict each sample to one filter's label, computing the model mean
+// (checked models only) and disagreement diff fresh, and sort by that diff;
+// samples without that label keep score null and sort last.
 function filterAnnotationItems(items, filterName) {
   return items
     .map((item) => {
-      const categories = item.categories.filter((c) => c.filter === filterName);
-      const diff = categories[0]?.diff ?? null;
-      return { ...item, categories, score: diff };
+      const label = item.labels.find((l) => l.filter === filterName) ?? null;
+      const mean = item.doc ? getMeanForFilter(item.doc, filterName) : null;
+      const categories = label
+        ? [{
+            ...label,
+            mean,
+            diff: mean === null ? null : Math.abs(mean - humanTarget(label.human)),
+          }]
+        : [];
+      return { ...item, categories, score: categories[0]?.diff ?? null };
     })
     .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1));
 }
@@ -715,8 +727,8 @@ function filterAnnotationItems(items, filterName) {
 // For one filter, score each model over the hand-annotated documents:
 //   maeHuman  - mean absolute error vs the hand labels mapped to 0/10,
 //               over samples that are labeled for this filter
-//   maeOthers - mean absolute error vs the mean of the OTHER models' ratings
-//               on the same document, over all matched samples
+//   maeOthers - mean absolute error vs the mean of the other CHECKED models'
+//               ratings on the same document, over all matched samples
 function computeModelStats(items, filterName) {
   const perModel = new Map(); // model -> {human: number[], others: number[]}
 
@@ -733,7 +745,7 @@ function computeModelStats(items, filterName) {
       if (target !== null) {
         stats.human.push(Math.abs(rating - target));
       }
-      const others = models.filter((m) => m !== model);
+      const others = models.filter((m) => m !== model && !state.disabledModels.has(m));
       if (others.length > 0) {
         const otherMean =
           others.reduce((sum, m) => sum + entries[m].rating, 0) / others.length;
@@ -809,10 +821,22 @@ function renderModelStats(items) {
     ...stats.map((s) => {
       const card = document.createElement("div");
       card.className = "model-stat";
+      const enabled = !state.disabledModels.has(s.model);
+      if (!enabled) card.classList.add("is-disabled");
 
-      const name = document.createElement("div");
+      const name = document.createElement("label");
       name.className = "model-stat-name";
-      name.textContent = s.model;
+
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.className = "model-stat-toggle";
+      toggle.checked = enabled;
+      toggle.title = "Include this model's ratings in the computed numbers";
+      toggle.addEventListener("change", () => setModelEnabled(s.model, toggle.checked));
+
+      const nameText = document.createElement("span");
+      nameText.textContent = s.model;
+      name.append(toggle, nameText);
 
       card.append(
         name,
@@ -822,6 +846,16 @@ function renderModelStats(items) {
       return card;
     }),
   );
+}
+
+// Unchecking a model drops its ratings from every computed number (means,
+// diffs, MAE baselines, accuracies) on both pages; its own rows stay visible,
+// dimmed, so it can be re-checked.
+function setModelEnabled(model, enabled) {
+  if (enabled) state.disabledModels.delete(model);
+  else state.disabledModels.add(model);
+  render();
+  renderLabelsPage();
 }
 
 /* ---------- Classification threshold & accuracy (labels page sidebar) ---------- */
@@ -855,6 +889,29 @@ function computeAccuracy(items, filterName, threshold) {
   return tally;
 }
 
+// Threshold-free accuracy over the checked models: a sample's mean rating
+// becomes p = mean/10, scored as p when the hand label is 1 and 1 - p when it
+// is 0, then averaged over all samples labeled for the filter. Equivalent to
+// 1 - MAE/10 on the 0-1 scale.
+function computeOverallAccuracy(items, filterName) {
+  let sum = 0;
+  let n = 0;
+  for (const item of items) {
+    const labeled = item.categories.find((c) => c.filter === filterName);
+    if (!labeled || labeled.mean === null) continue;
+    const p = labeled.mean / 10;
+    sum += labeled.human >= 1 ? p : 1 - p;
+    n += 1;
+  }
+  return { value: n > 0 ? sum / n : null, n };
+}
+
+function renderOverallAccuracy() {
+  const { value, n } = computeOverallAccuracy(state.labelsItems, state.labelsFilter);
+  els.overallValue.textContent = value === null ? "–" : `${(value * 100).toFixed(1)}%`;
+  els.overallN.textContent = n > 0 ? `n=${n}` : "";
+}
+
 function buildAccuracyRow(label, correct, total) {
   const row = document.createElement("div");
   row.className = "accuracy-row";
@@ -880,8 +937,7 @@ function renderAccuracy() {
   els.thresholdValue.textContent = `x = ${threshold.toFixed(1)}`;
   els.thresholdRange.value = String(threshold);
 
-  const items = state.annotations?.items ?? [];
-  const tally = computeAccuracy(items, state.labelsFilter, threshold);
+  const tally = computeAccuracy(state.labelsItems, state.labelsFilter, threshold);
   els.accuracyList.replaceChildren(
     buildAccuracyRow("positive accuracy", tally.posCorrect, tally.posTotal),
     buildAccuracyRow("negative %", tally.classNegative, tally.classTotal),
@@ -898,14 +954,18 @@ let labelsRenderToken = 0;
 
 async function renderLabelsPage() {
   const token = ++labelsRenderToken;
-  els.labelsStatusText.textContent = "Loading hand-annotated samples…";
-  els.labelsBody.textContent = "Loading hand-annotated samples…";
-  els.modelStatsList.textContent = "Loading…";
+  if (!state.annotations) {
+    els.labelsStatusText.textContent = "Loading hand-annotated samples…";
+    els.labelsBody.textContent = "Loading hand-annotated samples…";
+    els.modelStatsList.textContent = "Loading…";
+  }
   try {
     const { items, badLines } = await loadAnnotations();
     if (token !== labelsRenderToken) return; // superseded by a newer render
     const shown = filterAnnotationItems(items, state.labelsFilter);
-    renderModelStats(items);
+    state.labelsItems = shown;
+    renderModelStats(shown);
+    renderOverallAccuracy();
     renderAccuracy();
     els.labelsStatusText.textContent =
       `${shown.length} hand-labeled samples · ${state.labelsFilter}`;
