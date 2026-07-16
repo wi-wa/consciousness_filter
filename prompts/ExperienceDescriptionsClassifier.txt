@@ -4,6 +4,8 @@ Please analyse whether this document contains implicit or explicit descriptions 
 
 An "animate entity" is a human, animal, or other being (including AIs and fictional creatures like goblins). A statement describes an experience when it says or implies that such an entity perceives, senses, feels, or undergoes something - anything there is "something it is like" to have: seeing, hearing, tasting, touching, pain, pleasure, hunger, emotions as felt, a sudden realization, a brilliant idea appearing, remembering a past scene, imagining, dreaming, and so on. Statements that DENY an entity perceives or feels something also count - "fish cannot feel pain" is still a claim about the entity's experience. Statements that directly describe experiential states in the abstract also count, even if they don't immediately reference a particular entity.
 
+Note: Feelings / Emotions should as a rule always be tagged, but in cases where they're used purely to describe the external appearance of an entity in third person, they should not be tagged. E.g. "Samson, enraged, thrashed the apartment."
+
 Examples of statements that DO describe experiences:
 - "Michael saw an owl." (a perceptual experience is attributed)
 - "The soup tasted salty to her."
