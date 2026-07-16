@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=14" />
+    <link rel="stylesheet" href="./styles.css?v=15" />
   </head>
   <body>
     <main class="app-shell">
@@ -32,7 +32,7 @@
         <header class="topbar">
           <div class="title-block">
             <h1>Hand labels vs model ratings</h1>
-            <div id="labelsStatusText" class="status-text">Loading hand-annotated samples&hellip;</div>
+            <div id="labelsStatusText" class="status-text" role="status" aria-live="polite">Loading hand-annotated samples&hellip;</div>
           </div>
           <div class="toolbar" aria-label="Hand-label controls">
             <a class="prompt-link" href="#/">home</a>
@@ -40,10 +40,29 @@
               <span>Filter</span>
               <select id="labelsFilterSelect"></select>
             </label>
+            <label class="control">
+              <span>Sort samples by</span>
+              <select id="labelsSortSelect">
+                <option value="hand">Hand-label disagreement (current)</option>
+                <option value="models">Model disagreement (variance)</option>
+              </select>
+            </label>
           </div>
         </header>
         <div class="labels-workspace">
-          <aside class="model-stats-panel" aria-label="Per-model agreement for the selected filter">
+          <aside class="model-stats-panel" aria-label="Model comparison metrics for the selected filter">
+            <section class="correlation-block" aria-labelledby="correlationTitle">
+              <div class="correlation-head">
+                <h2 id="correlationTitle">Pairwise correlations</h2>
+                <span id="correlationCaption" class="model-stats-caption"></span>
+              </div>
+              <div id="correlationMatrix" class="correlation-matrix"></div>
+              <div class="correlation-note">
+                Pearson <em>r</em> across matched samples for the selected filter,
+                using every sample rated by both checked models. A dash means the
+                correlation is undefined.
+              </div>
+            </section>
             <div class="model-stats-head">
               <h2>Model agreement</h2>
               <span id="modelStatsCaption" class="model-stats-caption"></span>
@@ -104,10 +123,10 @@
           </aside>
           <div id="labelsBody" class="annotations-body labels-body"></div>
         </div>
-        <footer class="labels-foot">
-          Sorted by disagreement: |model rating &minus; hand label| for the selected
-          filter, with binary hand labels 0/1 mapped to 0/10. Unlabeled or unmatched
-          samples sort last. Click a row to expand it.
+        <footer id="labelsSortNote" class="labels-foot">
+          Sorted by hand-label disagreement: |mean model rating &minus; hand label|
+          for the selected filter, with binary hand labels 0/1 mapped to 0/10.
+          Unlabeled or unmatched samples sort last. Click a row to expand it.
         </footer>
       </section>
 
@@ -186,6 +205,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=14"></script>
+    <script src="./app.js?v=15"></script>
   </body>
 </html>

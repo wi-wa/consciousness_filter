@@ -22,6 +22,7 @@ const state = {
   filterName: "",
   ratingFilter: "all",
   labelsFilter: HUMAN_LABEL_FILTERS[0].filter, // labels page: which filter to show
+  labelsSort: "hand", // labels page: hand-label diff or inter-model variance
   labelsThreshold: 5, // labels page: classify mean >= threshold as 1 (0.1 steps)
   labelsItems: [], // labels page: current filter's items with fresh means/diffs
   disabledModels: new Set(), // models unchecked in the "Model agreement" box
@@ -40,7 +41,11 @@ const els = {
   dataView: document.getElementById("dataView"),
   labelsStatusText: document.getElementById("labelsStatusText"),
   labelsFilterSelect: document.getElementById("labelsFilterSelect"),
+  labelsSortSelect: document.getElementById("labelsSortSelect"),
+  labelsSortNote: document.getElementById("labelsSortNote"),
   labelsBody: document.getElementById("labelsBody"),
+  correlationCaption: document.getElementById("correlationCaption"),
+  correlationMatrix: document.getElementById("correlationMatrix"),
   modelStatsList: document.getElementById("modelStatsList"),
   modelStatsCaption: document.getElementById("modelStatsCaption"),
   thresholdRange: document.getElementById("thresholdRange"),
@@ -605,7 +610,7 @@ async function loadAnnotations() {
       if (!Number.isInteger(human) || human < 0) continue; // -1 = not yet labeled
       labels.push({ filter, short, human });
     }
-    items.push({ text: row.text, doc, labels });
+    items.push({ annotationIndex: items.length, text: row.text, doc, labels });
   }
 
   state.annotations = { items, badLines };
@@ -621,9 +626,19 @@ function buildAnnotationItem(item) {
 
   const score = document.createElement("span");
   score.className = "ann-score";
-  score.textContent = item.score === null ? "n/a" : item.score.toFixed(1);
-  if (item.score !== null && item.score >= 5) score.classList.add("is-high");
-  score.title = "Mean |model rating − hand label| across labeled filters";
+  score.textContent =
+    item.score === null
+      ? "n/a"
+      : item.sortMode === "models"
+        ? item.score.toFixed(2)
+        : item.score.toFixed(1);
+  if (item.sortMode === "hand" && item.score !== null && item.score >= 5) {
+    score.classList.add("is-high");
+  }
+  score.title =
+    item.sortMode === "models"
+      ? `Model rating variance across ${item.modelCount} checked model${item.modelCount === 1 ? "" : "s"}`
+      : "|mean model rating − hand label| for the selected filter";
 
   const chips = document.createElement("span");
   chips.className = "ann-chips";
@@ -702,14 +717,42 @@ function populateLabelsFilterControls() {
   els.labelsFilterSelect.value = state.labelsFilter;
 }
 
-// Restrict each sample to one filter's label, computing the model mean
-// (checked models only) and disagreement diff fresh, and sort by that diff;
-// samples without that label keep score null and sort last.
+// Population variance across the checked model ratings for one document.
+// With one rating the variance is 0; with no ratings it is unavailable.
+function getModelVarianceForFilter(doc, filterName) {
+  const entries = doc?.ratings[filterName];
+  if (!entries) return { value: null, n: 0 };
+  const ratings = Object.entries(entries)
+    .filter(([model]) => !state.disabledModels.has(model))
+    .map(([, entry]) => entry.rating);
+  if (ratings.length === 0) return { value: null, n: 0 };
+  const mean = ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+  const value =
+    ratings.reduce((sum, rating) => sum + (rating - mean) ** 2, 0) /
+    ratings.length;
+  return { value, n: ratings.length };
+}
+
+function compareNullableScoresDescending(a, b) {
+  if (a.score === null && b.score === null) {
+    return a.annotationIndex - b.annotationIndex;
+  }
+  if (a.score === null) return 1;
+  if (b.score === null) return -1;
+  return b.score - a.score || a.annotationIndex - b.annotationIndex;
+}
+
+// Restrict each sample to the selected filter, recompute metrics from the
+// checked models, and sort by either hand-label error or inter-model variance.
 function filterAnnotationItems(items, filterName) {
   return items
     .map((item) => {
       const label = item.labels.find((l) => l.filter === filterName) ?? null;
       const mean = item.doc ? getMeanForFilter(item.doc, filterName) : null;
+      const { value: modelVariance, n: modelCount } = getModelVarianceForFilter(
+        item.doc,
+        filterName,
+      );
       const categories = label
         ? [{
             ...label,
@@ -717,9 +760,148 @@ function filterAnnotationItems(items, filterName) {
             diff: mean === null ? null : Math.abs(mean - humanTarget(label.human)),
           }]
         : [];
-      return { ...item, categories, score: categories[0]?.diff ?? null };
+      const handDiff = categories[0]?.diff ?? null;
+      return {
+        ...item,
+        categories,
+        handDiff,
+        modelVariance,
+        modelCount,
+        sortMode: state.labelsSort,
+        score: state.labelsSort === "models" ? modelVariance : handDiff,
+      };
     })
-    .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1));
+    .toSorted(compareNullableScoresDescending);
+}
+
+/* ---------- Pairwise model correlations (labels page sidebar) ---------- */
+
+function collectCheckedModels(items, filterName) {
+  const models = new Set();
+  for (const item of items) {
+    for (const model of Object.keys(item.doc?.ratings[filterName] ?? {})) {
+      if (!state.disabledModels.has(model)) models.add(model);
+    }
+  }
+  return [...models].sort((a, b) => a.localeCompare(b));
+}
+
+// Pearson correlation using pairwise-complete observations. Correlation is
+// undefined with fewer than two pairs or when either series has zero variance.
+function computeModelCorrelation(items, filterName, modelA, modelB) {
+  const pairs = [];
+  for (const item of items) {
+    const entries = item.doc?.ratings[filterName];
+    const ratingA = entries?.[modelA]?.rating;
+    const ratingB = entries?.[modelB]?.rating;
+    if (Number.isFinite(ratingA) && Number.isFinite(ratingB)) {
+      pairs.push([ratingA, ratingB]);
+    }
+  }
+  const n = pairs.length;
+  if (n < 2) return { value: null, n };
+
+  const meanA = pairs.reduce((sum, pair) => sum + pair[0], 0) / n;
+  const meanB = pairs.reduce((sum, pair) => sum + pair[1], 0) / n;
+  let covariance = 0;
+  let varianceA = 0;
+  let varianceB = 0;
+  for (const [ratingA, ratingB] of pairs) {
+    const deltaA = ratingA - meanA;
+    const deltaB = ratingB - meanB;
+    covariance += deltaA * deltaB;
+    varianceA += deltaA ** 2;
+    varianceB += deltaB ** 2;
+  }
+  const denominator = Math.sqrt(varianceA * varianceB);
+  return { value: denominator === 0 ? null : covariance / denominator, n };
+}
+
+function renderCorrelationMatrix(items) {
+  const models = collectCheckedModels(items, state.labelsFilter);
+  els.correlationCaption.textContent =
+    `${models.length} checked model${models.length === 1 ? "" : "s"}`;
+
+  if (models.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ann-note";
+    empty.textContent = "Check at least one model to show correlations.";
+    els.correlationMatrix.replaceChildren(empty);
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "correlation-table";
+  table.setAttribute("aria-label", "Pairwise Pearson correlations between checked models");
+
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const corner = document.createElement("th");
+  corner.scope = "col";
+  corner.textContent = "";
+  headRow.append(corner);
+  models.forEach((model, index) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = String(index + 1);
+    th.title = model;
+    th.setAttribute("aria-label", `${index + 1}: ${model}`);
+    headRow.append(th);
+  });
+  head.append(headRow);
+
+  const body = document.createElement("tbody");
+  models.forEach((modelA, rowIndex) => {
+    const row = document.createElement("tr");
+    const rowHead = document.createElement("th");
+    rowHead.scope = "row";
+    rowHead.textContent = String(rowIndex + 1);
+    rowHead.title = modelA;
+    rowHead.setAttribute("aria-label", `${rowIndex + 1}: ${modelA}`);
+    row.append(rowHead);
+
+    models.forEach((modelB) => {
+      const { value: rawValue, n } = computeModelCorrelation(
+        items,
+        state.labelsFilter,
+        modelA,
+        modelB,
+      );
+      const value =
+        rawValue === null ? null : Math.max(-1, Math.min(1, rawValue));
+      const cell = document.createElement("td");
+      cell.textContent = value === null ? "–" : value.toFixed(2);
+      cell.title =
+        `${modelA} × ${modelB}: ` +
+        (value === null ? `undefined (n=${n})` : `r=${value.toFixed(3)} (n=${n})`);
+      cell.setAttribute("aria-label", cell.title);
+      if (value !== null) {
+        cell.classList.add(value < 0 ? "is-negative" : "is-positive");
+        cell.style.setProperty(
+          "--correlation-alpha",
+          `${8 + 32 * Math.abs(value)}%`,
+        );
+      }
+      row.append(cell);
+    });
+    body.append(row);
+  });
+  table.append(head, body);
+
+  const legend = document.createElement("ol");
+  legend.className = "correlation-legend";
+  models.forEach((model) => {
+    const item = document.createElement("li");
+    item.textContent = model;
+    legend.append(item);
+  });
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "correlation-table-wrap";
+  tableWrap.tabIndex = 0;
+  tableWrap.setAttribute("aria-label", "Scrollable model-correlation matrix");
+  tableWrap.append(table);
+  els.correlationMatrix.replaceChildren(tableWrap, legend);
 }
 
 /* ---------- Per-model agreement stats (labels page sidebar) ---------- */
@@ -944,6 +1126,23 @@ function renderAccuracy() {
   );
 }
 
+function renderLabelsSortNote() {
+  els.labelsSortNote.innerHTML = "";
+  if (state.labelsSort === "models") {
+    els.labelsSortNote.append(
+      "Sorted by model disagreement: population variance ",
+      "avg((model score − mean(model scores))²) across checked models for the ",
+      "selected filter. Samples without checked-model ratings sort last. Click a row to expand it.",
+    );
+    return;
+  }
+  els.labelsSortNote.append(
+    "Sorted by hand-label disagreement: |mean model rating − hand label| for the ",
+    "selected filter, with binary hand labels 0/1 mapped to 0/10. Unlabeled or ",
+    "unmatched samples sort last. Click a row to expand it.",
+  );
+}
+
 function setThreshold(value) {
   const clamped = Math.min(10, Math.max(0, value));
   state.labelsThreshold = Math.round(clamped * 10) / 10; // keep clean 0.1 steps
@@ -957,6 +1156,7 @@ async function renderLabelsPage() {
   if (!state.annotations) {
     els.labelsStatusText.textContent = "Loading hand-annotated samples…";
     els.labelsBody.textContent = "Loading hand-annotated samples…";
+    els.correlationMatrix.textContent = "Loading…";
     els.modelStatsList.textContent = "Loading…";
   }
   try {
@@ -964,11 +1164,15 @@ async function renderLabelsPage() {
     if (token !== labelsRenderToken) return; // superseded by a newer render
     const shown = filterAnnotationItems(items, state.labelsFilter);
     state.labelsItems = shown;
+    renderCorrelationMatrix(shown);
     renderModelStats(shown);
     renderOverallAccuracy();
     renderAccuracy();
+    renderLabelsSortNote();
+    const sortLabel =
+      state.labelsSort === "models" ? "model variance" : "hand-label error";
     els.labelsStatusText.textContent =
-      `${shown.length} hand-labeled samples · ${state.labelsFilter}`;
+      `${shown.length} samples · ${state.labelsFilter} · sorted by ${sortLabel}`;
     els.labelsBody.replaceChildren(...shown.map(buildAnnotationItem));
     if (badLines > 0) {
       const note = document.createElement("div");
@@ -979,6 +1183,8 @@ async function renderLabelsPage() {
   } catch (error) {
     if (token !== labelsRenderToken) return;
     els.labelsStatusText.textContent = "Could not load hand labels";
+    els.correlationCaption.textContent = "";
+    els.correlationMatrix.replaceChildren();
     els.modelStatsList.replaceChildren();
     els.accuracyList.replaceChildren();
     els.labelsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
@@ -1028,6 +1234,11 @@ function bindEvents() {
 
   els.labelsFilterSelect.addEventListener("change", () => {
     state.labelsFilter = els.labelsFilterSelect.value;
+    renderLabelsPage();
+  });
+
+  els.labelsSortSelect.addEventListener("change", () => {
+    state.labelsSort = els.labelsSortSelect.value;
     renderLabelsPage();
   });
 
