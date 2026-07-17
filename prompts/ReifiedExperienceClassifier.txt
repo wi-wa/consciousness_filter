@@ -12,6 +12,7 @@ Examples of statements that DO reify experience:
 - "The pain started out sharp, then faded into a dull ache." (properties of the sensation itself are described)
 - "I feel anger rising inside me." (the feeling is treated as an inner object being observed)
 - "Her memory of that day was vivid, but memories can deceive us." (the memory is treated as a fallible inner representation, and ‘vivid’ is inherently an experiential adjective)
+    - Note: talk about e.g. "memory formation" in the abstract does not count
 - "No description could convey what the music actually sounded like to him." (the experience is distinguished from any account of its object)
 - "As an AI, I do not have experiences, feelings or emotions" (picking out experiences as objects and ascribing properties to them)
 - Claims or narratives in which a mind, soul, or experiencing subject is immaterial, survives bodily death, moves between bodies, or otherwise exists independently of its physical body, including discussion of how it interacts with matter.
