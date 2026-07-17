@@ -8,5 +8,7 @@ data/*.jsonl.bak
 data/.*.jsonl.tmp
 data/*.jsonl.salvage
 data/*.jsonl.salvage.tmp
-!data/fineweb_edu_100k_rated.jsonl
+!data/fineweb_edu_88k_rated.jsonl
 !data/hand_annotated_samples.jsonl
+embedding_model/models/base_model/
+embedding_model/checkpoints/

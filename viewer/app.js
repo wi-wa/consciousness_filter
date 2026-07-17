@@ -1,5 +1,5 @@
 const DATA_URLS = [
-  "../data/fineweb_edu_100k_rated.jsonl",
+  "../data/fineweb_edu_88k_rated.jsonl",
 ];
 
 const LEGACY_FILTER = "philosophy_of_mind";
@@ -23,7 +23,8 @@ const state = {
   ratingFilter: "all",
   labelsFilter: HUMAN_LABEL_FILTERS[0].filter, // labels page: which filter to show
   labelsSort: "hand", // labels page: hand-label diff or inter-model variance
-  labelsThreshold: 5, // labels page: classify mean >= threshold as 1 (0.1 steps)
+  labelsThreshold: 5, // labels page: classify selected aggregate >= threshold as 1
+  labelsAccuracyAggregation: "mean", // labels page: mean or max checked-model score
   labelsItems: [], // labels page: current filter's items with fresh means/diffs
   disabledModels: new Set(), // models unchecked in the "Model agreement" box
   promptPaths: {}, // filter name -> prompt file path (from config.json)
@@ -52,6 +53,7 @@ const els = {
   thresholdMinus: document.getElementById("thresholdMinus"),
   thresholdPlus: document.getElementById("thresholdPlus"),
   thresholdValue: document.getElementById("thresholdValue"),
+  accuracyAggregationSelect: document.getElementById("accuracyAggregationSelect"),
   accuracyList: document.getElementById("accuracyList"),
   overallValue: document.getElementById("overallValue"),
   overallN: document.getElementById("overallN"),
@@ -154,6 +156,19 @@ function getMeanForFilter(doc, filterName) {
     .filter(([model]) => !state.disabledModels.has(model))
     .map(([, entry]) => entry.rating);
   if (ratings.length === 0) return null;
+  return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+}
+
+// Aggregate the checked models for threshold-based accuracy metrics. Other
+// viewer calculations deliberately continue to use their existing means.
+function getAccuracyScoreForFilter(doc, filterName, aggregation) {
+  const entries = doc.ratings[filterName];
+  if (!entries) return null;
+  const ratings = Object.entries(entries)
+    .filter(([model]) => !state.disabledModels.has(model))
+    .map(([, entry]) => entry.rating);
+  if (ratings.length === 0) return null;
+  if (aggregation === "max") return Math.max(...ratings);
   return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
 }
 
@@ -1095,56 +1110,48 @@ function setModelEnabled(model, enabled) {
 
 /* ---------- Classification threshold & accuracy (labels page sidebar) ---------- */
 
-// Classify every matched sample by the models' mean rating for one filter
-// (mean >= threshold -> 1, else 0) and report the filtering tradeoff:
-//   posCorrect/posTotal      - positive accuracy: fraction of hand-label-1
-//                              samples classified 1 (the complement is the
-//                              true positives leaking through the filter)
-//   classNegative/classTotal - negative %: fraction of ALL samples classified
-//                              0, i.e. the share of data the filter keeps
-function computeAccuracy(items, filterName, threshold) {
-  const tally = { posTotal: 0, posCorrect: 0, classTotal: 0, classNegative: 0 };
+// Classify every labeled sample by either the mean or maximum checked-model
+// rating (score >= threshold -> 1, else 0), then tally accuracy overall and
+// separately for hand-label-1 and hand-label-0 samples.
+function computeAccuracy(items, filterName, threshold, aggregation) {
+  const tally = {
+    overallTotal: 0,
+    overallCorrect: 0,
+    posTotal: 0,
+    posCorrect: 0,
+    negTotal: 0,
+    negCorrect: 0,
+  };
 
   for (const item of items) {
     if (!item.doc) continue;
-    const mean = getMeanForFilter(item.doc, filterName);
-    if (mean === null) continue;
-
-    const predicted = mean >= threshold ? 1 : 0;
-    tally.classTotal += 1;
-    if (predicted === 0) tally.classNegative += 1;
-
     const labeled = item.categories.find((c) => c.filter === filterName);
-    if (labeled && labeled.human >= 1) {
+    if (!labeled) continue;
+    const score = getAccuracyScoreForFilter(item.doc, filterName, aggregation);
+    if (score === null) continue;
+
+    const predicted = score >= threshold ? 1 : 0;
+    const expected = labeled.human >= 1 ? 1 : 0;
+    tally.overallTotal += 1;
+    if (predicted === expected) tally.overallCorrect += 1;
+
+    if (expected === 1) {
       tally.posTotal += 1;
       if (predicted === 1) tally.posCorrect += 1;
+    } else {
+      tally.negTotal += 1;
+      if (predicted === 0) tally.negCorrect += 1;
     }
   }
 
   return tally;
 }
 
-// Threshold-free accuracy over the checked models: a sample's mean rating
-// becomes p = mean/10, scored as p when the hand label is 1 and 1 - p when it
-// is 0, then averaged over all samples labeled for the filter. Equivalent to
-// 1 - MAE/10 on the 0-1 scale.
-function computeOverallAccuracy(items, filterName) {
-  let sum = 0;
-  let n = 0;
-  for (const item of items) {
-    const labeled = item.categories.find((c) => c.filter === filterName);
-    if (!labeled || labeled.mean === null) continue;
-    const p = labeled.mean / 10;
-    sum += labeled.human >= 1 ? p : 1 - p;
-    n += 1;
-  }
-  return { value: n > 0 ? sum / n : null, n };
-}
-
-function renderOverallAccuracy() {
-  const { value, n } = computeOverallAccuracy(state.labelsItems, state.labelsFilter);
-  els.overallValue.textContent = value === null ? "–" : `${(value * 100).toFixed(1)}%`;
-  els.overallN.textContent = n > 0 ? `n=${n}` : "";
+function renderOverallAccuracy(tally) {
+  const { overallCorrect: correct, overallTotal: total } = tally;
+  els.overallValue.textContent =
+    total === 0 ? "–" : `${((correct / total) * 100).toFixed(1)}%`;
+  els.overallN.textContent = total > 0 ? `${correct}/${total}` : "";
 }
 
 function buildAccuracyRow(label, correct, total) {
@@ -1171,11 +1178,18 @@ function renderAccuracy() {
   const threshold = state.labelsThreshold;
   els.thresholdValue.textContent = `x = ${threshold.toFixed(1)}`;
   els.thresholdRange.value = String(threshold);
+  els.accuracyAggregationSelect.value = state.labelsAccuracyAggregation;
 
-  const tally = computeAccuracy(state.labelsItems, state.labelsFilter, threshold);
+  const tally = computeAccuracy(
+    state.labelsItems,
+    state.labelsFilter,
+    threshold,
+    state.labelsAccuracyAggregation,
+  );
+  renderOverallAccuracy(tally);
   els.accuracyList.replaceChildren(
     buildAccuracyRow("positive accuracy", tally.posCorrect, tally.posTotal),
-    buildAccuracyRow("negative %", tally.classNegative, tally.classTotal),
+    buildAccuracyRow("negative accuracy", tally.negCorrect, tally.negTotal),
   );
 }
 
@@ -1219,7 +1233,6 @@ async function renderLabelsPage() {
     state.labelsItems = shown;
     renderCorrelationMatrix(shown);
     renderModelStats(shown);
-    renderOverallAccuracy();
     renderAccuracy();
     renderLabelsSortNote();
     const sortLabel =
@@ -1239,6 +1252,8 @@ async function renderLabelsPage() {
     els.correlationCaption.textContent = "";
     els.correlationMatrix.replaceChildren();
     els.modelStatsList.replaceChildren();
+    els.overallValue.textContent = "–";
+    els.overallN.textContent = "";
     els.accuracyList.replaceChildren();
     els.labelsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
   }
@@ -1303,6 +1318,10 @@ function bindEvents() {
   });
   els.thresholdPlus.addEventListener("click", () => {
     setThreshold(state.labelsThreshold + 0.1);
+  });
+  els.accuracyAggregationSelect.addEventListener("change", () => {
+    state.labelsAccuracyAggregation = els.accuracyAggregationSelect.value;
+    renderAccuracy();
   });
 
   window.addEventListener("hashchange", renderRoute);

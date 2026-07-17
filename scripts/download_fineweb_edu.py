@@ -15,8 +15,9 @@ from tqdm import tqdm
 
 REPO_ID = "HuggingFaceFW/fineweb-edu"
 DEFAULT_SAMPLE_PREFIX = "sample/10BT"
-DEFAULT_COUNT = 100_000
-DEFAULT_OUTPUT = Path("data/fineweb_edu_100k.jsonl")
+DEFAULT_COUNT = 88_196
+DEFAULT_MAX_CHARACTERS = 8_192
+DEFAULT_OUTPUT = Path("data/fineweb_edu_88k.jsonl")
 DEFAULT_BATCH_SIZE = 1_024
 
 
@@ -95,7 +96,19 @@ def parse_args() -> argparse.Namespace:
         "--count",
         type=int,
         default=DEFAULT_COUNT,
-        help=f"Number of non-empty documents to write. Default: {DEFAULT_COUNT}.",
+        help=(
+            "Number of non-empty documents at or below --max-characters to write. "
+            f"Default: {DEFAULT_COUNT}."
+        ),
+    )
+    parser.add_argument(
+        "--max-characters",
+        type=int,
+        default=DEFAULT_MAX_CHARACTERS,
+        help=(
+            "Skip normalized documents longer than this many Unicode characters. "
+            f"Default: {DEFAULT_MAX_CHARACTERS}."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -133,6 +146,8 @@ def main() -> None:
         raise SystemExit("--count must be greater than zero")
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be greater than zero")
+    if args.max_characters <= 0:
+        raise SystemExit("--max-characters must be greater than zero")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     existing_digests = (
@@ -150,6 +165,8 @@ def main() -> None:
         )
         with tqdm(total=args.count, unit="doc", desc="FineWeb-Edu") as progress:
             for text in texts:
+                if len(text) > args.max_characters:
+                    continue
                 digest = text_digest(text)
                 if digest in existing_digests:
                     continue

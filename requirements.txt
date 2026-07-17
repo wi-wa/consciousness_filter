@@ -2,3 +2,6 @@ huggingface_hub
 httpx
 pyarrow
 tqdm
+torch
+transformers>=4.48
+peft>=0.14

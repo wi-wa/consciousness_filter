@@ -1,6 +1,6 @@
 {
-  "input_jsonl": "data/fineweb_edu_100k.jsonl",
-  "output_jsonl": "data/fineweb_edu_100k_rated.jsonl",
+  "input_jsonl": "data/fineweb_edu_88k.jsonl",
+  "output_jsonl": "data/fineweb_edu_88k_rated.jsonl",
   "filters": [
     {
       "name": "philosophy_of_mind",
@@ -18,8 +18,7 @@
   "grading_instruction_path": "prompts/grading_instruction.txt",
   "models": [
     "google/gemma-4-31b-it",
-    "x-ai/grok-4.5",
-    "qwen/qwen3.5-27b"
+    "x-ai/grok-4.5"
   ],
   "openrouter": {
     "api_key_env": "OPENROUTER_API_KEY",
@@ -29,15 +28,15 @@
   },
   "request": {
     "reasoning_effort": "medium",
-    "max_output_tokens": 8192,
-    "max_retries": 3,
-    "retry_base_delay_seconds": 3.0,
-    "timeout_seconds": 400.0
+    "max_output_tokens": 4000,
+    "max_retries": 1,
+    "retry_base_delay_seconds": 5.0,
+    "timeout_seconds": 30.0
   },
   "run": {
-    "batch_size": 16,
+    "batch_size": 32,
     "max_concurrent_requests": 64,
-    "max_documents": 768,
+    "max_documents": 4000,
     "skip_existing_ratings": true,
     "resume_output": true,
     "flush_each_row": true,

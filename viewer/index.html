@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=16" />
+    <link rel="stylesheet" href="./styles.css?v=18" />
   </head>
   <body>
     <main class="app-shell">
@@ -94,10 +94,8 @@
                 </span>
               </div>
               <div class="overall-note">
-                Checked models&rsquo; mean rating as a probability (mean/10), scored
-                per sample as p when your label is 1 and 1&nbsp;&minus;&nbsp;p when
-                it is 0, averaged over all samples labeled for this filter.
-                Threshold-free; equals 1&nbsp;&minus;&nbsp;MAE/10. Higher is better.
+                Fraction of labeled samples correctly classified using the selected
+                checked-model aggregation and classification threshold below.
               </div>
             </div>
             <div class="threshold-block">
@@ -119,13 +117,20 @@
                 />
                 <button id="thresholdPlus" class="icon-button" type="button" title="Threshold +0.1">+</button>
               </div>
+              <label class="control aggregation-control">
+                <span>Combine checked models</span>
+                <select id="accuracyAggregationSelect">
+                  <option value="mean">Mean</option>
+                  <option value="max">Max</option>
+                </select>
+              </label>
               <div id="accuracyList" class="accuracy-list"></div>
               <div class="threshold-note">
-                Mean rating of the checked models &ge; x classifies a sample as 1 (caught), below x
-                as 0 (kept). <strong>positive accuracy</strong>: fraction of your
-                hand-label-1 samples classified 1 — the complement is true positives
-                leaking through. <strong>negative %</strong>: fraction of all samples
-                classified 0 — the share of data a filter at this threshold keeps.
+                The selected aggregate of checked-model ratings &ge; x classifies a
+                sample as 1; below x classifies it as 0. <strong>positive accuracy</strong>
+                is the fraction of hand-label-1 samples classified 1.
+                <strong>negative accuracy</strong> is the fraction of hand-label-0
+                samples classified 0.
               </div>
             </div>
           </aside>
@@ -213,6 +218,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=16"></script>
+    <script src="./app.js?v=18"></script>
   </body>
 </html>

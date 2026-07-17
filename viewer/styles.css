@@ -1208,6 +1208,10 @@ button {
   accent-color: var(--series);
 }
 
+.aggregation-control select {
+  width: 100%;
+}
+
 .accuracy-list {
   display: flex;
   flex-direction: column;
