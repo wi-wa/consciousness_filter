@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Consciousness Filter — Rated Documents</title>
     <!-- Bump ?v= together on every viewer change so stale cached assets never mix. -->
-    <link rel="stylesheet" href="./styles.css?v=15" />
+    <link rel="stylesheet" href="./styles.css?v=16" />
   </head>
   <body>
     <main class="app-shell">
@@ -50,19 +50,27 @@
           </div>
         </header>
         <div class="labels-workspace">
-          <aside class="model-stats-panel" aria-label="Model comparison metrics for the selected filter">
+          <aside class="correlation-panel" aria-label="Pairwise model correlations for the selected filter">
             <section class="correlation-block" aria-labelledby="correlationTitle">
               <div class="correlation-head">
-                <h2 id="correlationTitle">Pairwise correlations</h2>
+                <h2 id="correlationTitle">Normalized pairwise correlations</h2>
                 <span id="correlationCaption" class="model-stats-caption"></span>
               </div>
               <div id="correlationMatrix" class="correlation-matrix"></div>
+              <div class="correlation-scale" aria-label="Color scale from negative one in red through zero to positive one in green">
+                <span>&minus;1</span>
+                <span class="correlation-scale-bar" aria-hidden="true"></span>
+                <span>+1</span>
+              </div>
               <div class="correlation-note">
-                Pearson <em>r</em> across matched samples for the selected filter,
-                using every sample rated by both checked models. A dash means the
-                correlation is undefined.
+                Each cell is Pearson <em>r</em> across matched samples, standardized
+                over every defined cell in the square as (<em>r</em> &minus; mean) / population
+                standard deviation. Colors saturate at &minus;1 and +1. A dash means
+                the value is undefined.
               </div>
             </section>
+          </aside>
+          <aside class="model-stats-panel" aria-label="Model comparison metrics for the selected filter">
             <div class="model-stats-head">
               <h2>Model agreement</h2>
               <span id="modelStatsCaption" class="model-stats-caption"></span>
@@ -205,6 +213,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=15"></script>
+    <script src="./app.js?v=16"></script>
   </body>
 </html>

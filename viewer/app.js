@@ -814,15 +814,50 @@ function computeModelCorrelation(items, filterName, modelA, modelB) {
     varianceB += deltaB ** 2;
   }
   const denominator = Math.sqrt(varianceA * varianceB);
-  return { value: denominator === 0 ? null : covariance / denominator, n };
+  const value = denominator === 0 ? null : covariance / denominator;
+  return {
+    value: value === null ? null : Math.max(-1, Math.min(1, value)),
+    n,
+  };
+}
+
+// Standardize every defined entry in the complete square. This intentionally
+// includes both symmetric halves and the diagonal, matching the displayed
+// matrix. Undefined correlations are omitted from the normalization moments.
+function normalizeCorrelationMatrix(matrix) {
+  const values = matrix
+    .flat()
+    .map((entry) => entry.value)
+    .filter(Number.isFinite);
+  if (values.length === 0) {
+    return { matrix, mean: null, std: null };
+  }
+
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance =
+    values.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+    values.length;
+  const std = Math.sqrt(variance);
+  return {
+    mean,
+    std,
+    matrix: matrix.map((row) =>
+      row.map((entry) => ({
+        ...entry,
+        normalized:
+          entry.value === null || std === 0
+            ? null
+            : (entry.value - mean) / std,
+      })),
+    ),
+  };
 }
 
 function renderCorrelationMatrix(items) {
   const models = collectCheckedModels(items, state.labelsFilter);
-  els.correlationCaption.textContent =
-    `${models.length} checked model${models.length === 1 ? "" : "s"}`;
 
   if (models.length === 0) {
+    els.correlationCaption.textContent = "0 checked models";
     const empty = document.createElement("div");
     empty.className = "ann-note";
     empty.textContent = "Check at least one model to show correlations.";
@@ -830,9 +865,30 @@ function renderCorrelationMatrix(items) {
     return;
   }
 
+  const rawMatrix = models.map((modelA) =>
+    models.map((modelB) =>
+      computeModelCorrelation(
+        items,
+        state.labelsFilter,
+        modelA,
+        modelB,
+      ),
+    ),
+  );
+  const { matrix, mean, std } = normalizeCorrelationMatrix(rawMatrix);
+  const momentSummary =
+    mean === null
+      ? ""
+      : ` · μ ${mean.toFixed(2)} · σ ${std.toFixed(2)}`;
+  els.correlationCaption.textContent =
+    `${models.length} checked model${models.length === 1 ? "" : "s"}${momentSummary}`;
+
   const table = document.createElement("table");
   table.className = "correlation-table";
-  table.setAttribute("aria-label", "Pairwise Pearson correlations between checked models");
+  table.setAttribute(
+    "aria-label",
+    "Whole-matrix standardized pairwise Pearson correlations between checked models",
+  );
 
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
@@ -860,26 +916,23 @@ function renderCorrelationMatrix(items) {
     rowHead.setAttribute("aria-label", `${rowIndex + 1}: ${modelA}`);
     row.append(rowHead);
 
-    models.forEach((modelB) => {
-      const { value: rawValue, n } = computeModelCorrelation(
-        items,
-        state.labelsFilter,
-        modelA,
-        modelB,
-      );
-      const value =
-        rawValue === null ? null : Math.max(-1, Math.min(1, rawValue));
+    models.forEach((modelB, columnIndex) => {
+      const { value: rawValue, normalized, n } = matrix[rowIndex][columnIndex];
       const cell = document.createElement("td");
-      cell.textContent = value === null ? "–" : value.toFixed(2);
+      cell.textContent = normalized === null ? "–" : normalized.toFixed(2);
       cell.title =
         `${modelA} × ${modelB}: ` +
-        (value === null ? `undefined (n=${n})` : `r=${value.toFixed(3)} (n=${n})`);
+        (normalized === null
+          ? `standardized value undefined; r=${rawValue?.toFixed(3) ?? "undefined"} (n=${n})`
+          : `z=${normalized.toFixed(3)}; r=${rawValue.toFixed(3)} (n=${n})`);
       cell.setAttribute("aria-label", cell.title);
-      if (value !== null) {
-        cell.classList.add(value < 0 ? "is-negative" : "is-positive");
+      if (normalized !== null) {
+        const colorValue = Math.max(-1, Math.min(1, normalized));
+        cell.classList.add(colorValue < 0 ? "is-negative" : "is-positive");
+        if (Math.abs(colorValue) >= 0.7) cell.classList.add("is-extreme");
         cell.style.setProperty(
-          "--correlation-alpha",
-          `${8 + 32 * Math.abs(value)}%`,
+          "--correlation-strength",
+          `${Math.abs(colorValue) * 100}%`,
         );
       }
       row.append(cell);
@@ -899,7 +952,7 @@ function renderCorrelationMatrix(items) {
   const tableWrap = document.createElement("div");
   tableWrap.className = "correlation-table-wrap";
   tableWrap.tabIndex = 0;
-  tableWrap.setAttribute("aria-label", "Scrollable model-correlation matrix");
+  tableWrap.setAttribute("aria-label", "Scrollable normalized model-correlation matrix");
   tableWrap.append(table);
   els.correlationMatrix.replaceChildren(tableWrap, legend);
 }

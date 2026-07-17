@@ -869,6 +869,19 @@ button {
 
 /* ---------- Per-model agreement panel (labels page) ---------- */
 
+.correlation-panel {
+  flex: 0 0 clamp(330px, 26vw, 400px);
+  min-width: 0;
+  max-height: 100%;
+  align-self: center;
+  overflow: auto;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
 .model-stats-panel {
   flex: 0 0 clamp(320px, 30vw, 440px);
   min-width: 0;
@@ -888,12 +901,11 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--grid);
 }
 
 .correlation-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
@@ -926,8 +938,8 @@ button {
 
 .correlation-table th,
 .correlation-table td {
-  min-width: 25px;
-  height: 25px;
+  min-width: 30px;
+  height: 28px;
   padding: 3px;
   border-radius: 4px;
   text-align: center;
@@ -945,11 +957,24 @@ button {
 }
 
 .correlation-table td.is-positive {
-  background: rgb(42 120 214 / var(--correlation-alpha));
+  background: color-mix(
+    in srgb,
+    #218a4b var(--correlation-strength),
+    var(--surface)
+  );
 }
 
 .correlation-table td.is-negative {
-  background: rgb(198 45 45 / var(--correlation-alpha));
+  background: color-mix(
+    in srgb,
+    #c62d2d var(--correlation-strength),
+    var(--surface)
+  );
+}
+
+.correlation-table td.is-extreme {
+  color: #fff;
+  font-weight: 650;
 }
 
 .correlation-legend {
@@ -969,6 +994,23 @@ button {
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--muted);
+}
+
+.correlation-scale {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.correlation-scale-bar {
+  height: 8px;
+  border: 1px solid var(--grid);
+  border-radius: 999px;
+  background: linear-gradient(90deg, #c62d2d, var(--surface), #218a4b);
 }
 
 .model-stats-head {
@@ -1233,5 +1275,12 @@ button {
   .model-stats-panel {
     flex: 0 0 auto;
     max-height: 45vh;
+  }
+
+  .correlation-panel {
+    flex: 0 0 auto;
+    width: 100%;
+    max-height: none;
+    align-self: stretch;
   }
 }
