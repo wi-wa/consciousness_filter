@@ -34,7 +34,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG = REPO_ROOT / "embedding_model/models/configs/train.json"
+DEFAULT_CONFIG = REPO_ROOT / "embedding_model/configs/train.json"
 
 
 @dataclass(frozen=True)

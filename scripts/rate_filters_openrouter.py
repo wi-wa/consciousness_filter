@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Rate pretraining documents against multiple filter prompts and models via OpenRouter.
+"""Fill missing document ratings through OpenRouter without replacing existing data.
 
-All settings live in config.json (or the path passed via --config). For every
-document, each configured filter prompt is run with each configured model. The
+All settings live in config.json. Within the first run.max_documents input
+documents, each configured filter prompt is run with each configured model. The
 model must answer with tagged fields (<explanation>, <quote>, <rating>), which
 are stored per filter as a list with one entry per model:
 
@@ -23,14 +23,15 @@ are stored per filter as a list with one entry per model:
       }
     }
 
-Ratings already present on an input row or in the existing output are kept,
-and only the missing (filter, model) pairs are requested (when
-run.skip_existing_ratings is true). Adding a model or filter to the config and
-rerunning with the same input/output therefore only buys the new pairs: before
-the output file is truncated for rewriting, all ratings on its rows are saved
-to a "<output>.salvage" sidecar (keyed by document hash) and merged back in as
-rows are re-processed. The sidecar is deleted once a run reaches the end of
-the input.
+Existing rating entries are preserved without replacement or normalization,
+and only missing (filter, model) pairs are requested. If the output has fewer than
+run.max_documents rows, input rows are added up to that boundary before rating.
+Rows already present beyond the boundary are never removed or modified.
+
+Every mutating run first overwrites "<output>.bak" with the current output.
+Completed batches are then merged into the live output through atomic file
+replacements so interrupted runs retain completed progress. ``--check`` is
+strictly read-only and prints only aggregate missing-document/rating counts.
 
 Config keys:
   input_jsonl / output_jsonl   paths to the input and rated-output JSONL files
@@ -46,21 +47,22 @@ Config keys:
   openrouter                   api_key_env, chat_url, app_title, http_referer
   request                      reasoning_effort, max_output_tokens, max_retries,
                                retry_base_delay_seconds, timeout_seconds
-  run                          batch_size (documents written per flush),
+  hand_annotations_jsonl      hand labels used by rerate_hand_annotated.py
+  run                          batch_size (documents persisted per update),
                                max_concurrent_requests (in-flight API calls),
-                               max_documents (null = no limit),
-                               skip_existing_ratings, resume_output,
-                               flush_each_row, fsync_each_row
+                               max_documents (input boundary; null = all input)
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
+import copy
 import json
 import os
 import random
 import re
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,6 +108,7 @@ class FilterSpec:
 class Config:
     input_jsonl: Path
     output_jsonl: Path
+    hand_annotations_jsonl: Path
     filters: list[FilterSpec]
     grading_instruction: str
     models: list[str]
@@ -124,10 +127,6 @@ class Config:
     batch_size: int
     max_concurrent_requests: int
     max_documents: int | None
-    skip_existing_ratings: bool
-    resume_output: bool
-    flush_each_row: bool
-    fsync_each_row: bool
 
 
 def load_config(config_path: Path) -> Config:
@@ -157,7 +156,13 @@ def load_config(config_path: Path) -> Config:
         prompt_template = prompt_path.read_text(encoding="utf-8")
         if "{document}" not in prompt_template:
             raise SystemExit(f"{prompt_path} does not contain the {{document}} marker.")
-        filters.append(FilterSpec(name=name, prompt_path=prompt_path, prompt_template=prompt_template))
+        filters.append(
+            FilterSpec(
+                name=name,
+                prompt_path=prompt_path,
+                prompt_template=prompt_template,
+            )
+        )
 
     filter_names = [spec.name for spec in filters]
     if len(set(filter_names)) != len(filter_names):
@@ -185,6 +190,9 @@ def load_config(config_path: Path) -> Config:
     config = Config(
         input_jsonl=Path(require(raw, "input_jsonl", "top level")),
         output_jsonl=Path(require(raw, "output_jsonl", "top level")),
+        hand_annotations_jsonl=Path(
+            require(raw, "hand_annotations_jsonl", "top level")
+        ),
         filters=filters,
         grading_instruction=grading_instruction,
         models=models,
@@ -200,10 +208,6 @@ def load_config(config_path: Path) -> Config:
         batch_size=require(run, "batch_size", "'run'"),
         max_concurrent_requests=require(run, "max_concurrent_requests", "'run'"),
         max_documents=max_documents,
-        skip_existing_ratings=require(run, "skip_existing_ratings", "'run'"),
-        resume_output=require(run, "resume_output", "'run'"),
-        flush_each_row=require(run, "flush_each_row", "'run'"),
-        fsync_each_row=require(run, "fsync_each_row", "'run'"),
     )
 
     if config.batch_size <= 0:
@@ -312,9 +316,6 @@ def has_complete_ratings(row: dict[str, Any], config: Config) -> bool:
 
 def pending_pairs(row: dict[str, Any], config: Config) -> list[tuple[FilterSpec, str]]:
     """(filter, model) pairs that still need an API call for this row."""
-    if not config.skip_existing_ratings:
-        return [(spec, model) for spec in config.filters for model in config.models]
-
     have = entries_by_model(row)
     return [
         (spec, model)
@@ -329,116 +330,31 @@ def merge_ratings(
     config: Config,
     new_entries: dict[tuple[str, str], dict[str, Any]],
 ) -> None:
-    """Fold new (filter_name, model) -> entry results into row["ratings"].
-
-    Entries are ordered by the config's filter and model order so output rows
-    are deterministic; entries for models/filters no longer in the config are
-    preserved.
-    """
-    have = entries_by_model(row)
-    for (filter_name, model), entry in new_entries.items():
-        have.setdefault(filter_name, {})[model] = entry
-
-    config_filter_names = [spec.name for spec in config.filters]
-    ordered: dict[str, list[dict[str, Any]]] = {}
-    for filter_name in config_filter_names + sorted(set(have) - set(config_filter_names)):
-        model_entries = have.get(filter_name, {})
-        model_order = [model for model in config.models if model in model_entries]
-        model_order.extend(sorted(set(model_entries) - set(config.models)))
-        entries = [{"model": model, **model_entries[model]} for model in model_order]
-        if entries:
-            ordered[filter_name] = entries
-
-    row["ratings"] = ordered
-
-
-# A salvage map holds ratings recovered from output rows that are about to be
-# truncated (or from a previous run's sidecar): {text digest: {filter: {model: entry}}}.
-SalvageMap = dict[str, dict[str, dict[str, dict[str, Any]]]]
-
-
-def text_digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def salvage_path_for(config: Config) -> Path:
-    return config.output_jsonl.with_name(config.output_jsonl.name + ".salvage")
-
-
-def add_to_salvage(
-    salvage: SalvageMap, digest: str, have: dict[str, dict[str, dict[str, Any]]]
-) -> None:
-    target = salvage.setdefault(digest, {})
-    for filter_name, model_entries in have.items():
-        for model, entry in model_entries.items():
-            target.setdefault(filter_name, {})[model] = entry
-
-
-def load_salvage(path: Path) -> SalvageMap:
-    salvage: SalvageMap = {}
-    if not path.exists():
-        return salvage
-
-    with path.open("r", encoding="utf-8") as salvage_file:
-        for line in salvage_file:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            digest = row.get("text_sha256")
-            by_model = row.get("ratings_by_model")
-            if not isinstance(digest, str) or not isinstance(by_model, dict):
-                continue
-
-            valid = {
-                filter_name: {
-                    model: entry
-                    for model, entry in model_entries.items()
-                    if isinstance(model, str) and is_valid_entry(entry)
-                }
-                for filter_name, model_entries in by_model.items()
-                if isinstance(model_entries, dict)
-            }
-            add_to_salvage(salvage, digest, valid)
-
-    return salvage
-
-
-def write_salvage(path: Path, salvage: SalvageMap) -> None:
-    tmp_path = path.with_name(path.name + ".tmp")
-    with tmp_path.open("w", encoding="utf-8", newline="\n") as salvage_file:
-        for digest, by_model in salvage.items():
-            salvage_file.write(
-                json.dumps(
-                    {"text_sha256": digest, "ratings_by_model": by_model},
-                    ensure_ascii=False,
-                )
-            )
-            salvage_file.write("\n")
-        salvage_file.flush()
-        os.fsync(salvage_file.fileno())
-    os.replace(tmp_path, path)
-
-
-def apply_salvage(row: dict[str, Any], config: Config, salvage: SalvageMap) -> None:
-    """Merge any salvaged ratings for this document onto the row."""
-    if not salvage:
+    """Append new entries without replacing or normalizing existing entries."""
+    if not new_entries:
         return
-    salvaged = salvage.get(text_digest(row["text"]))
-    if salvaged:
-        merge_ratings(
-            row,
-            config,
-            {
-                (filter_name, model): entry
-                for filter_name, model_entries in salvaged.items()
-                for model, entry in model_entries.items()
-            },
+
+    if "ratings" not in row:
+        row["ratings"] = {}
+    ratings = row["ratings"]
+    if not isinstance(ratings, dict):
+        raise SystemExit(
+            "Refusing to add ratings: the existing 'ratings' value is not an object."
         )
+
+    for (filter_name, model), entry in new_entries.items():
+        existing = entries_by_model(row).get(filter_name, {})
+        if model in existing:
+            # Missing-only callers should never reach this branch. Keeping the old
+            # value is safer than silently replacing it.
+            continue
+        entries = ratings.setdefault(filter_name, [])
+        if not isinstance(entries, list):
+            raise SystemExit(
+                f"Refusing to add ratings: existing {filter_name!r} ratings are "
+                "not a list."
+            )
+        entries.append({"model": model, **entry})
 
 
 def extract_message_text(message_content: Any) -> str:
@@ -644,283 +560,340 @@ async def rate_batch(
     return rated_rows, failed_pairs
 
 
-def count_pending_calls(config: Config, resume_rows: int, salvage: SalvageMap) -> int:
-    pending_calls = 0
-    pending_docs = 0
-    with config.input_jsonl.open("r", encoding="utf-8") as input_file:
-        for line_number, line in enumerate(input_file, start=1):
-            if line_number <= resume_rows:
-                continue
-
-            row = json.loads(line)
-            if not isinstance(row, dict):
-                raise SystemExit(f"Line {line_number} is not a JSON object.")
-            if "text" not in row or not isinstance(row["text"], str):
-                raise SystemExit(f"Line {line_number} has no string 'text' field.")
-
-            apply_salvage(row, config, salvage)
-            pairs = pending_pairs(row, config)
-            if not pairs:
-                continue
-
-            pending_docs += 1
-            pending_calls += len(pairs)
-            if config.max_documents is not None and pending_docs >= config.max_documents:
-                return pending_calls
-
-    return pending_calls
+@dataclass
+class RatedDataset:
+    raw_lines: list[str]
+    rows: list[dict[str, Any]]
 
 
-def write_jsonl_row(config: Config, output_file: Any, row: dict[str, Any]) -> None:
-    output_file.write(json.dumps(row, ensure_ascii=False))
-    output_file.write("\n")
-    if config.flush_each_row:
-        output_file.flush()
-    if config.fsync_each_row:
-        os.fsync(output_file.fileno())
+@dataclass(frozen=True)
+class MainScope:
+    dataset: RatedDataset
+    input_rows: list[dict[str, Any]]
+    document_count: int
 
 
-def prepare_resumable_output(config: Config) -> tuple[int, SalvageMap]:
-    """Trim the output to its longest complete prefix, salvaging trimmed ratings.
+@dataclass(frozen=True)
+class MissingStats:
+    missing_documents: int
+    total_documents: int
+    missing_ratings: int
+    total_ratings: int
 
-    Returns the number of kept rows plus a salvage map holding every rating
-    found beyond that prefix (and in any sidecar left by an earlier run). The
-    salvage map is persisted to the sidecar *before* the output is truncated,
-    so no rating is ever lost to a crash.
-    """
-    output_path = config.output_jsonl
-    salvage_path = salvage_path_for(config)
-    if output_path == config.input_jsonl:
-        raise SystemExit(
-            "Continuous resumable writes require output_jsonl to be different from "
-            "input_jsonl. Write to a rated output JSONL, then replace the input after "
-            "the run completes if you want that layout."
-        )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def parse_document_line(raw_line: str, path: Path, line_number: int) -> dict[str, Any]:
+    try:
+        row = json.loads(raw_line)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid JSON at {path}:{line_number}: {exc}") from exc
+    if not isinstance(row, dict):
+        raise SystemExit(f"Line {line_number} of {path} is not a JSON object.")
+    if not isinstance(row.get("text"), str):
+        raise SystemExit(f"Line {line_number} of {path} has no string 'text' field.")
+    return row
 
-    if not config.resume_output:
-        output_path.unlink(missing_ok=True)
-        salvage_path.unlink(missing_ok=True)
-        return 0, {}
 
-    salvage = load_salvage(salvage_path)
-    if not output_path.exists():
-        return 0, salvage
+def read_rated_dataset(path: Path) -> RatedDataset:
+    if not path.exists():
+        return RatedDataset(raw_lines=[], rows=[])
+    raw_lines: list[str] = []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as rated_file:
+        for line_number, raw_line in enumerate(rated_file, start=1):
+            if not raw_line.strip():
+                raise SystemExit(f"Blank line at {path}:{line_number} would break alignment.")
+            raw_lines.append(raw_line)
+            rows.append(parse_document_line(raw_line, path, line_number))
+    return RatedDataset(raw_lines=raw_lines, rows=rows)
 
-    valid_rows = 0
-    salvaged_tail_rows = 0
-    truncate_at: int | None = None
-    with output_path.open("r+b") as output_file:
-        while True:
-            line_start = output_file.tell()
-            raw_line = output_file.readline()
-            if not raw_line:
+
+def read_input_prefix(path: Path, limit: int | None) -> list[dict[str, Any]]:
+    if not path.exists():
+        raise SystemExit(f"Input JSONL does not exist: {path}")
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as input_file:
+        for line_number, raw_line in enumerate(input_file, start=1):
+            if limit is not None and line_number > limit:
                 break
+            if not raw_line.strip():
+                raise SystemExit(f"Blank line at {path}:{line_number} would break alignment.")
+            rows.append(parse_document_line(raw_line, path, line_number))
+    return rows
 
-            try:
-                row = json.loads(raw_line.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                row = None
 
-            if truncate_at is None and isinstance(row, dict) and has_complete_ratings(row, config):
-                valid_rows += 1
-                if not raw_line.endswith(b"\n"):
-                    # A complete row can only lack its newline at EOF; repair it.
-                    output_file.write(b"\n")
-                continue
+def load_main_scope(config: Config) -> MainScope:
+    dataset = read_rated_dataset(config.output_jsonl)
+    read_limit = config.max_documents
+    if read_limit is not None:
+        read_limit = max(read_limit, len(dataset.rows))
+    input_rows = read_input_prefix(config.input_jsonl, read_limit)
 
-            if truncate_at is None:
-                truncate_at = line_start
-
-            if isinstance(row, dict) and isinstance(row.get("text"), str):
-                have = entries_by_model(row)
-                if have:
-                    add_to_salvage(salvage, text_digest(row["text"]), have)
-                    salvaged_tail_rows += 1
-
-        if truncate_at is not None:
-            if salvage:
-                write_salvage(salvage_path, salvage)
-            output_file.truncate(truncate_at)
-            print(
-                f"Kept {valid_rows} rows already complete for the current config; "
-                f"salvaged ratings from {salvaged_tail_rows} incomplete rows into "
-                f"{salvage_path} and trimmed them from the output. They will be "
-                "rewritten with only the missing (filter, model) pairs re-rated."
+    if len(dataset.rows) > len(input_rows):
+        raise SystemExit(
+            f"Rated output has {len(dataset.rows)} rows but the input has only "
+            f"{len(input_rows)} rows. Refusing to modify either file."
+        )
+    for index, rated_row in enumerate(dataset.rows):
+        if rated_row["text"] != input_rows[index]["text"]:
+            raise SystemExit(
+                f"Rated output does not match the input at line {index + 1}; "
+                "refusing to modify either file."
             )
 
-    return valid_rows, salvage
+    document_count = len(input_rows)
+    if config.max_documents is not None:
+        document_count = min(config.max_documents, document_count)
+    return MainScope(
+        dataset=dataset,
+        input_rows=input_rows,
+        document_count=document_count,
+    )
 
 
-def validate_resume_alignment(config: Config, resume_rows: int) -> None:
-    if resume_rows == 0:
-        return
-
-    with config.input_jsonl.open("r", encoding="utf-8") as input_file:
-        with config.output_jsonl.open("r", encoding="utf-8") as output_file:
-            for line_number in range(1, resume_rows + 1):
-                input_line = input_file.readline()
-                output_line = output_file.readline()
-                if not input_line or not output_line:
-                    raise SystemExit(
-                        f"Cannot resume: missing line {line_number} in input or output."
-                    )
-
-                input_row = json.loads(input_line)
-                output_row = json.loads(output_line)
-                if input_row.get("text") != output_row.get("text"):
-                    raise SystemExit(
-                        "Cannot resume: existing output does not match the input JSONL "
-                        f"at line {line_number}."
-                    )
+def backup_path_for(config: Config) -> Path:
+    return config.output_jsonl.with_name(config.output_jsonl.name + ".bak")
 
 
-def print_rating_histograms(config: Config) -> None:
+def create_startup_backup(config: Config) -> Path | None:
+    """Atomically overwrite the single fixed backup with the current output."""
     output_path = config.output_jsonl
     if not output_path.exists():
-        print(f"No rated output exists yet: {output_path}")
+        return None
+    backup_path = backup_path_for(config)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=backup_path.parent, prefix=backup_path.name + ".", delete=False
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+        with output_path.open("rb") as output_file:
+            shutil.copyfileobj(output_file, temporary_file)
+        temporary_file.flush()
+        os.fsync(temporary_file.fileno())
+    try:
+        shutil.copystat(output_path, temporary_path)
+        os.replace(temporary_path, backup_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    print(f"Backed up {output_path} to {backup_path}.")
+    return backup_path
+
+
+def serialize_row(row: dict[str, Any]) -> str:
+    return json.dumps(row, ensure_ascii=False) + "\n"
+
+
+def normalize_lines(lines: list[str]) -> list[str]:
+    return [line if line.endswith("\n") else line + "\n" for line in lines]
+
+
+def atomic_replace_lines(path: Path, expected: list[str], replacement: list[str]) -> None:
+    """Replace a JSONL atomically, refusing to overwrite concurrent changes."""
+    if path.exists():
+        with path.open("r", encoding="utf-8") as current_file:
+            current = current_file.readlines()
+    else:
+        current = []
+    if current != expected:
+        raise SystemExit(
+            f"Refusing to write: {path} changed while this process was running."
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="\n",
+        dir=path.parent,
+        prefix=path.name + ".",
+        delete=False,
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+        for raw_line in normalize_lines(replacement):
+            temporary_file.write(raw_line)
+        temporary_file.flush()
+        os.fsync(temporary_file.fileno())
+    try:
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def persist_replacements(
+    config: Config,
+    dataset: RatedDataset,
+    replacements: dict[int, dict[str, Any]],
+) -> None:
+    if not replacements:
         return
-
-    # (filter name, model) -> [count for rating 0..10]
-    counts: dict[tuple[str, str], list[int]] = {}
-    total_rows = 0
-    with output_path.open("r", encoding="utf-8") as output_file:
-        for line in output_file:
-            row = json.loads(line)
-            if not isinstance(row, dict):
-                continue
-            total_rows += 1
-            for filter_name, model_entries in entries_by_model(row).items():
-                for model, entry in model_entries.items():
-                    histogram = counts.setdefault((filter_name, model), [0] * 11)
-                    histogram[entry["rating"]] += 1
-
-    print(f"\nRating histograms for {output_path} ({total_rows} rows):")
-    for (filter_name, model), histogram in sorted(counts.items()):
-        rated = sum(histogram)
-        mean = sum(rating * count for rating, count in enumerate(histogram)) / rated
-        bins = " ".join(f"{rating}:{count}" for rating, count in enumerate(histogram))
-        print(f"  {filter_name} / {model} (n={rated}, mean={mean:.2f})")
-        print(f"    {bins}")
+    replacement_lines = list(dataset.raw_lines)
+    for index, row in replacements.items():
+        replacement_lines[index] = serialize_row(row)
+    replacement_lines = normalize_lines(replacement_lines)
+    atomic_replace_lines(config.output_jsonl, dataset.raw_lines, replacement_lines)
+    dataset.raw_lines = replacement_lines
+    for index, row in replacements.items():
+        dataset.rows[index] = row
 
 
-async def rate_jsonl(config: Config) -> None:
-    if not config.input_jsonl.exists():
-        raise SystemExit(f"Input JSONL does not exist: {config.input_jsonl}")
+def extend_output_to_scope(config: Config, scope: MainScope) -> int:
+    dataset = scope.dataset
+    if len(dataset.rows) >= scope.document_count:
+        return 0
+    old_count = len(dataset.rows)
+    replacement_lines = list(dataset.raw_lines)
+    for index in range(old_count, scope.document_count):
+        replacement_lines.append(serialize_row(scope.input_rows[index]))
+    replacement_lines = normalize_lines(replacement_lines)
+    atomic_replace_lines(config.output_jsonl, dataset.raw_lines, replacement_lines)
+    dataset.raw_lines = replacement_lines
+    dataset.rows.extend(copy.deepcopy(scope.input_rows[old_count : scope.document_count]))
+    return scope.document_count - old_count
 
-    resume_rows, salvage = prepare_resumable_output(config)
-    validate_resume_alignment(config, resume_rows)
+
+def missing_stats(
+    config: Config,
+    rows: list[dict[str, Any] | None],
+) -> MissingStats:
+    pairs_per_document = len(config.filters) * len(config.models)
+    missing_documents = 0
+    missing_ratings = 0
+    for row in rows:
+        missing = pairs_per_document if row is None else len(pending_pairs(row, config))
+        if missing:
+            missing_documents += 1
+            missing_ratings += missing
+    return MissingStats(
+        missing_documents=missing_documents,
+        total_documents=len(rows),
+        missing_ratings=missing_ratings,
+        total_ratings=len(rows) * pairs_per_document,
+    )
+
+
+def format_missing_stats(stats: MissingStats) -> str:
+    return (
+        f"{stats.missing_documents}/{stats.total_documents} documents missing ratings, "
+        f"{stats.missing_ratings}/{stats.total_ratings} ratings missing in total."
+    )
+
+
+def main_scope_rows(scope: MainScope) -> list[dict[str, Any] | None]:
+    return [
+        scope.dataset.rows[index] if index < len(scope.dataset.rows) else None
+        for index in range(scope.document_count)
+    ]
+
+
+def ensure_appendable(row: dict[str, Any], pairs: list[tuple[FilterSpec, str]], line: int) -> None:
+    if "ratings" not in row:
+        return
+    ratings = row["ratings"]
+    if not isinstance(ratings, dict):
+        raise SystemExit(
+            f"Refusing to rate line {line}: its existing 'ratings' value is not an object."
+        )
+    for filter_spec, _ in pairs:
+        if filter_spec.name in ratings and not isinstance(ratings[filter_spec.name], list):
+            raise SystemExit(
+                f"Refusing to rate line {line}: existing {filter_spec.name!r} ratings "
+                "are not a list."
+            )
+
+
+async def rate_selected_rows(
+    config: Config,
+    dataset: RatedDataset,
+    row_indexes: list[int],
+    progress_description: str,
+) -> tuple[int, int]:
+    pending: list[tuple[int, dict[str, Any], list[tuple[FilterSpec, str]]]] = []
+    for index in row_indexes:
+        row = dataset.rows[index]
+        pairs = pending_pairs(row, config)
+        if pairs:
+            ensure_appendable(row, pairs, index + 1)
+            pending.append((index + 1, copy.deepcopy(row), pairs))
+    pending_total = sum(len(pairs) for _, _, pairs in pending)
+    if not pending:
+        return 0, 0
 
     api_key = get_api_key(config)
     headers = make_headers(config, api_key)
-    pending_total = count_pending_calls(config, resume_rows=resume_rows, salvage=salvage)
-
-    reached_end_of_input = False
-    docs_started = 0
-    docs_completed = 0
-    rows_appended = 0
-    failed_pairs_total = 0
-    batch: list[tuple[int, dict[str, Any], list[tuple[FilterSpec, str]]]] = []
-    start_time = time.monotonic()
     semaphore = asyncio.Semaphore(config.max_concurrent_requests)
-
+    failed_total = 0
+    saved_total = 0
     timeout = httpx.Timeout(config.request_timeout_seconds)
+    start_time = time.monotonic()
     async with httpx.AsyncClient(timeout=timeout) as client:
-        with config.input_jsonl.open("r", encoding="utf-8") as input_file:
-            with config.output_jsonl.open("a", encoding="utf-8", newline="\n") as output_file:
-                with tqdm(total=pending_total, unit="call", desc="Filter rating") as progress:
-
-                    async def flush_batch() -> None:
-                        nonlocal batch, docs_completed, rows_appended, failed_pairs_total
-                        if not batch:
-                            return
-                        rated_rows, failed_pairs = await rate_batch(
-                            client=client,
-                            headers=headers,
-                            config=config,
-                            semaphore=semaphore,
-                            batch=batch,
-                            progress=progress,
-                        )
-                        failed_pairs_total += failed_pairs
-                        for rated_row in rated_rows:
-                            write_jsonl_row(config, output_file, rated_row)
-                            rows_appended += 1
-                        docs_completed += len(rated_rows)
-                        batch = []
-
-                    for line_number, line in enumerate(input_file, start=1):
-                        if line_number <= resume_rows:
-                            continue
-
-                        row = json.loads(line)
-                        if not isinstance(row, dict):
-                            raise SystemExit(f"Line {line_number} is not a JSON object.")
-
-                        if "text" not in row or not isinstance(row["text"], str):
-                            raise SystemExit(
-                                f"Line {line_number} has no string 'text' field."
-                            )
-
-                        apply_salvage(row, config, salvage)
-                        pairs = pending_pairs(row, config)
-                        if (
-                            config.max_documents is not None
-                            and docs_started >= config.max_documents
-                        ):
-                            break
-
-                        if pairs:
-                            batch.append((line_number, row, pairs))
-                            docs_started += 1
-                            if len(batch) >= config.batch_size:
-                                await flush_batch()
-                            if (
-                                config.max_documents is not None
-                                and docs_started >= config.max_documents
-                            ):
-                                break
-                        else:
-                            await flush_batch()
-                            write_jsonl_row(config, output_file, row)
-                            rows_appended += 1
-                    else:
-                        reached_end_of_input = True
-
-                    await flush_batch()
-
-    if reached_end_of_input:
-        # Every input row is now fully written, so the sidecar is spent.
-        salvage_path_for(config).unlink(missing_ok=True)
+        with tqdm(total=pending_total, unit="call", desc=progress_description) as progress:
+            for offset in range(0, len(pending), config.batch_size):
+                batch = pending[offset : offset + config.batch_size]
+                rated_rows, failed_pairs = await rate_batch(
+                    client=client,
+                    headers=headers,
+                    config=config,
+                    semaphore=semaphore,
+                    batch=batch,
+                    progress=progress,
+                )
+                failed_total += failed_pairs
+                replacements: dict[int, dict[str, Any]] = {}
+                for (line_number, _, before_pairs), rated_row in zip(
+                    batch, rated_rows, strict=True
+                ):
+                    saved = len(before_pairs) - len(pending_pairs(rated_row, config))
+                    if saved:
+                        replacements[line_number - 1] = rated_row
+                        saved_total += saved
+                # Each completed batch reaches the live JSONL before another batch starts.
+                persist_replacements(config, dataset, replacements)
 
     elapsed = time.monotonic() - start_time
-    calls_per_doc = len(config.filters) * len(config.models)
     print(
-        f"Resumed after {resume_rows} rows; appended {rows_appended} rows to "
-        f"{config.output_jsonl}; "
-        f"rated {docs_completed} documents "
-        f"(up to {calls_per_doc} calls each) in {elapsed:.1f}s."
+        f"Saved {saved_total} new ratings in {elapsed:.1f}s; "
+        f"{failed_total} requests remain missing."
     )
-    if failed_pairs_total:
+    return saved_total, failed_total
+
+
+async def rate_jsonl(config: Config) -> None:
+    scope = load_main_scope(config)
+    stats_before = missing_stats(config, main_scope_rows(scope))
+    if not stats_before.missing_ratings:
+        print(format_missing_stats(stats_before))
+        return
+
+    added_rows = extend_output_to_scope(config, scope)
+    if added_rows:
         print(
-            f"WARNING: {failed_pairs_total} (filter, model) pairs failed all retries "
-            "and were left unrated. Run the script again to retry just those pairs."
+            f"Added {added_rows} missing document rows through input line "
+            f"{scope.document_count}; preserved all rows beyond that boundary."
         )
-    print_rating_histograms(config)
+    await rate_selected_rows(
+        config,
+        scope.dataset,
+        list(range(scope.document_count)),
+        progress_description="Filter rating",
+    )
+    print(format_missing_stats(missing_stats(config, main_scope_rows(scope))))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config.json"),
-        help="Path to the JSON config file (default: config.json)",
+        "--check",
+        action="store_true",
+        help="Print aggregate missing counts without backups, API calls, or writes.",
     )
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = load_config(Path("config.json"))
+    if args.check:
+        scope = load_main_scope(config)
+        print(format_missing_stats(missing_stats(config, main_scope_rows(scope))))
+        return
+
+    create_startup_backup(config)
     asyncio.run(rate_jsonl(config))
 
 
