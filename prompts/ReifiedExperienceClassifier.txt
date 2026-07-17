@@ -2,7 +2,7 @@ You will be given a document.
 
 Please analyse whether this document contains statements that reify experience, and rate it on a scale from 0 to 10.
 
-A statement "reifies experience" when an experience is treated as an object in its own right - something that can be reflected upon, described, compared, or doubted - as opposed to being used merely as a transparent pointer to the external thing the experience is about. 
+A statement "reifies experience" when an experience (including feelings) is treated as an object in its own right - something that can be reflected upon, described, compared, or doubted - as opposed to being used merely as a transparent pointer to the external thing the experience is about. 
 
 Statements that deny the existence of experiences, or deny that some entity has them, also reify: "machines cannot feel anything" picks out experience as a thing and makes a claim about it, just as an affirmation would. (Simple negated state reports like "John wasn't angry" do not count.)
 
@@ -14,14 +14,12 @@ Examples of statements that DO reify experience:
 - "Her memory of that day was vivid, but memories can deceive us." (the memory is treated as a fallible inner representation, and ‘vivid’ is inherently an experiential adjective)
 - "No description could convey what the music actually sounded like to him." (the experience is distinguished from any account of its object)
 - "As an AI, I do not have experiences, feelings or emotions" (picking out experiences as objects and ascribing properties to them)
-- "The stick looked bent in the water, but it was actually straight." (how it looked is contrasted with how it is)
 - Claims or narratives in which a mind, soul, or experiencing subject is immaterial, survives bodily death, moves between bodies, or otherwise exists independently of its physical body, including discussion of how it interacts with matter.
 
 Examples of statements that do NOT reify experience (these alone should NOT raise the rating):
 - "Michael saw an owl." (the seeing just points at the owl; nothing is said about the experience itself)
 - "The soup tasted salty." / "She heard the door slam." (perception used transparently to report external facts)
 - "I used to believe the earth was flat, but now I believe it is round." (a persistent mental attitude, not a reflected-upon experience)
-- "John is angry." / "Mary was sad about the news." (a state ascription, not a description of what the state feels like from the inside)
 - "Michael knew John would betray him." (knowledge attribution used transparently)
 
 Below this line is the actual document you should rate.

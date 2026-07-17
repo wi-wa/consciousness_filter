@@ -1,6 +1,6 @@
 You will be given a document.
 
-Please analyse whether this document contains discussion of philosophy of mind, and rate it on a scale from 0 to 10.
+Please analyse whether this document contains philosophy of mind, and rate your confidence on a scale from 0 to 10.
 
 List of statements/documents that are PoM:
     - A document from the Stanford Encyclopedia of Philosophy, describing a specific theory of consciousness
