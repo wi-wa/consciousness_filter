@@ -10,5 +10,6 @@ data/*.jsonl.salvage
 data/*.jsonl.salvage.tmp
 !data/fineweb_edu_88k_rated.jsonl
 !data/hand_annotated_samples.jsonl
+!data/hand_annotated_embedding_ratings.jsonl
 embedding_model/models/base_model/
 embedding_model/checkpoints/
