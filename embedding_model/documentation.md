@@ -1,14 +1,21 @@
 Trains embedding model to reproduce the LLM-judges
 
 Data input:
-    consciousness_filter/data/fineweb_edu_88k_rated.jsonl
-    consciousness_filter/data/hand_annotated_samples.jsonl
+    consciousness_filter/embedding_model/data/fineweb_edu_88k_rated.jsonl
+    consciousness_filter/embedding_model/data/hand_annotated_samples.jsonl
 
     Creates:
-        validation set = hand_annotated samples + uniformly random 5% random sample of fineweb_edu_88k_rated
+        validation set = hand_annotated samples + the configured uniformly random fraction of fineweb_edu_88k_rated
         train set = fineweb_edu_88k_rated - validation set
 
         Note: the validation set contains the hand_annotated samples, but uses the LLM judges ratings on those samples
+
+    Training-only upsampling:
+        data.upsample_mult defines an integer weight for every filter
+        A training row qualifies for a filter when its mean configured-judge rating is >= 2
+        Weight 1 keeps one copy; weight N gives the row N total copies
+        If a row qualifies for multiple filters, only the largest qualifying weight is used
+        Validation rows are never duplicated
 
 Model:
     Modern Bert, but we append a prediction head at the end, which has (n_judges in fineweb_edu_rated x n_filters) outputs
@@ -53,8 +60,6 @@ Logging:
 
 
     
-
-
 
 
 

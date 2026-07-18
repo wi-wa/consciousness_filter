@@ -35,8 +35,8 @@
     "timeout_seconds": 60.0
   },
   "run": {
-    "batch_size": 32,
-    "max_concurrent_requests": 64,
-    "max_documents": 4000
+    "batch_size": 64,
+    "max_concurrent_requests": 128,
+    "max_documents": 8000
   }
 }

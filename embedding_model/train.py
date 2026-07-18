@@ -26,8 +26,9 @@ import json
 import math
 import random
 import sys
+import time
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,12 +37,30 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = REPO_ROOT / "embedding_model/configs/train.json"
 
+HUMAN_LABEL_FIELDS = {
+    "philosophy_of_mind": ("pom-rating", "PoM"),
+    "reified_experience": ("reification-rating", "Reification"),
+    "experience_descriptions": ("experience-rating", "Experience"),
+}
+UPSAMPLE_FILTER_ALIASES = {
+    "pom": "philosophy_of_mind",
+    "reification": "reified_experience",
+    "experience": "experience_descriptions",
+}
+UPSAMPLE_NORMALIZED_RATING_THRESHOLD = 0.2
+
 
 @dataclass(frozen=True)
 class Example:
     text: str
     targets: tuple[float, ...]
     source_line: int
+
+
+@dataclass(frozen=True)
+class HandAnnotation:
+    text: str
+    labels: tuple[int | None, ...]
 
 
 @dataclass(frozen=True)
@@ -56,6 +75,29 @@ class PreparedData:
     matched_hand_rows: int
     unmatched_hand_rows: int
     random_validation_rows: int
+    human_labels_by_source_line: dict[int, tuple[int | None, ...]] = field(
+        default_factory=dict
+    )
+    unique_training_examples: int = 0
+    upsampled_source_rows: int = 0
+    upsample_weights: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class AccuracyTally:
+    overall_total: int = 0
+    overall_score_sum: float = 0.0
+    positive_total: int = 0
+    positive_score_sum: float = 0.0
+    negative_total: int = 0
+    negative_score_sum: float = 0.0
+
+
+@dataclass(frozen=True)
+class ValidationMetrics:
+    loss: float
+    mae: float
+    human_accuracy: dict[str, AccuracyTally] = field(default_factory=dict)
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,8 +213,90 @@ def extract_targets(
     return tuple(targets)
 
 
-def read_hand_texts(path: Path) -> list[str]:
-    texts: list[str] = []
+def load_upsample_weights(
+    data_config: dict[str, Any], filter_names: list[str]
+) -> dict[str, int]:
+    """Load per-filter integer multiplicities, accepting configured short aliases."""
+    raw_weights = data_config.get("upsample_mult")
+    if raw_weights is None:
+        return {filter_name: 1 for filter_name in filter_names}
+    if not isinstance(raw_weights, dict):
+        raise SystemExit("data.upsample_mult must be an object of filter: integer weight.")
+
+    known_filters = set(filter_names)
+    weights: dict[str, int] = {}
+    for configured_name, weight in raw_weights.items():
+        if not isinstance(configured_name, str) or not configured_name:
+            raise SystemExit("Every data.upsample_mult key must be a non-empty string.")
+        filter_name = UPSAMPLE_FILTER_ALIASES.get(configured_name, configured_name)
+        if filter_name not in known_filters:
+            raise SystemExit(
+                f"Unknown filter {configured_name!r} in data.upsample_mult. "
+                f"Configured filters: {', '.join(filter_names)}"
+            )
+        if filter_name in weights:
+            raise SystemExit(
+                f"data.upsample_mult specifies filter {filter_name!r} more than once."
+            )
+        if not isinstance(weight, int) or isinstance(weight, bool) or weight < 1:
+            raise SystemExit(
+                f"data.upsample_mult[{configured_name!r}] must be an integer >= 1."
+            )
+        weights[filter_name] = weight
+
+    missing_filters = [name for name in filter_names if name not in weights]
+    if missing_filters:
+        raise SystemExit(
+            "data.upsample_mult must include every configured filter; missing: "
+            + ", ".join(missing_filters)
+        )
+    return weights
+
+
+def example_upsample_weight(
+    example: Example,
+    filter_names: list[str],
+    judge_names: list[str],
+    upsample_weights: dict[str, int],
+) -> int:
+    """Return total training multiplicity, using the max weight of qualifying filters."""
+    judge_count = len(judge_names)
+    expected_target_count = len(filter_names) * judge_count
+    if judge_count == 0 or len(example.targets) != expected_target_count:
+        raise ValueError("Example targets do not match the configured filter/judge layout.")
+
+    multiplicity = 1
+    for filter_index, filter_name in enumerate(filter_names):
+        start = filter_index * judge_count
+        mean_rating = sum(example.targets[start : start + judge_count]) / judge_count
+        if mean_rating >= UPSAMPLE_NORMALIZED_RATING_THRESHOLD:
+            multiplicity = max(multiplicity, upsample_weights[filter_name])
+    return multiplicity
+
+
+def upsample_training_examples(
+    examples: list[Example],
+    filter_names: list[str],
+    judge_names: list[str],
+    upsample_weights: dict[str, int],
+) -> tuple[list[Example], int]:
+    """Repeat each qualifying row to its total multiplicity; return rows affected too."""
+    result: list[Example] = []
+    upsampled_source_rows = 0
+    for example in examples:
+        multiplicity = example_upsample_weight(
+            example,
+            filter_names,
+            judge_names,
+            upsample_weights,
+        )
+        result.extend([example] * multiplicity)
+        upsampled_source_rows += int(multiplicity > 1)
+    return result, upsampled_source_rows
+
+
+def read_hand_rows(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     try:
         hand_file = path.open("r", encoding="utf-8")
     except FileNotFoundError:
@@ -188,10 +312,34 @@ def read_hand_texts(path: Path) -> list[str]:
             text = row.get("text") if isinstance(row, dict) else None
             if not isinstance(text, str) or not text:
                 raise SystemExit(f"Missing non-empty 'text' at {path}:{line_number}.")
-            texts.append(text)
-    if not texts:
+            rows.append(row)
+    if not rows:
         raise SystemExit(f"No hand-annotated documents found in {path}.")
-    return texts
+    return rows
+
+
+def read_hand_texts(path: Path) -> list[str]:
+    return [row["text"] for row in read_hand_rows(path)]
+
+
+def read_hand_annotations(path: Path, filter_names: list[str]) -> list[HandAnnotation]:
+    annotations: list[HandAnnotation] = []
+    for row in read_hand_rows(path):
+        labels: list[int | None] = []
+        for filter_name in filter_names:
+            field_spec = HUMAN_LABEL_FIELDS.get(filter_name)
+            raw_label = None if field_spec is None else row.get(field_spec[0])
+            if (
+                isinstance(raw_label, int)
+                and not isinstance(raw_label, bool)
+                and raw_label >= 0
+            ):
+                labels.append(raw_label)
+            else:
+                # Match the viewer: malformed, negative, and absent labels are ignored.
+                labels.append(None)
+        annotations.append(HandAnnotation(text=row["text"], labels=tuple(labels)))
+    return annotations
 
 
 def match_hand_rows(
@@ -217,6 +365,29 @@ def match_hand_rows(
     return matched, unmatched
 
 
+def match_hand_annotations(
+    annotations: list[HandAnnotation], rated_texts: list[str], prefix_chars: int
+) -> tuple[dict[int, tuple[int | None, ...]], int]:
+    """Join annotations to rated rows using the viewer's exact/prefix matching."""
+    exact: dict[str, int] = {}
+    prefix: dict[str, int] = {}
+    for index, text in enumerate(rated_texts):
+        exact.setdefault(text, index)
+        prefix.setdefault(text[:prefix_chars], index)
+
+    matched_labels: dict[int, tuple[int | None, ...]] = {}
+    unmatched = 0
+    for annotation in annotations:
+        index = exact.get(annotation.text)
+        if index is None:
+            index = prefix.get(annotation.text[:prefix_chars])
+        if index is None:
+            unmatched += 1
+        else:
+            matched_labels.setdefault(index, annotation.labels)
+    return matched_labels, unmatched
+
+
 def prepare_data(config: dict[str, Any]) -> PreparedData:
     data_config = config["data"]
     rated_path = resolve_path(require(data_config, "rated_path", "data"), "data.rated_path")
@@ -233,7 +404,8 @@ def prepare_data(config: dict[str, Any]) -> PreparedData:
         raise SystemExit("data.prefix_match_chars must be positive.")
 
     filter_names, judge_names, target_names = load_target_layout(rating_config_path)
-    hand_texts = read_hand_texts(hand_path)
+    upsample_weights = load_upsample_weights(data_config, filter_names)
+    hand_annotations = read_hand_annotations(hand_path, filter_names)
     rated_texts: list[str] = []
     examples_by_row: dict[int, Example] = {}
     incomplete_rows = 0
@@ -266,7 +438,10 @@ def prepare_data(config: dict[str, Any]) -> PreparedData:
     if not examples_by_row:
         raise SystemExit("No rows have a complete rating for every configured filter and judge.")
 
-    hand_rows, unmatched_hand_rows = match_hand_rows(hand_texts, rated_texts, prefix_chars)
+    hand_labels_by_row, unmatched_hand_rows = match_hand_annotations(
+        hand_annotations, rated_texts, prefix_chars
+    )
+    hand_rows = set(hand_labels_by_row)
     complete_hand_rows = hand_rows & examples_by_row.keys()
     incomplete_hand_rows = len(hand_rows) - len(complete_hand_rows)
     if incomplete_hand_rows:
@@ -295,8 +470,18 @@ def prepare_data(config: dict[str, Any]) -> PreparedData:
     if not validation_rows:
         raise SystemExit("The validation split contains no complete examples.")
 
+    unique_training_examples = [
+        examples_by_row[index] for index in sorted(train_rows)
+    ]
+    training_examples, upsampled_source_rows = upsample_training_examples(
+        unique_training_examples,
+        filter_names,
+        judge_names,
+        upsample_weights,
+    )
+
     return PreparedData(
-        train=[examples_by_row[index] for index in sorted(train_rows)],
+        train=training_examples,
         validation=[examples_by_row[index] for index in sorted(validation_rows)],
         target_names=target_names,
         filter_names=filter_names,
@@ -306,6 +491,13 @@ def prepare_data(config: dict[str, Any]) -> PreparedData:
         matched_hand_rows=len(complete_hand_rows),
         unmatched_hand_rows=unmatched_hand_rows + incomplete_hand_rows,
         random_validation_rows=len(random_validation_rows),
+        human_labels_by_source_line={
+            examples_by_row[index].source_line: hand_labels_by_row[index]
+            for index in complete_hand_rows
+        },
+        unique_training_examples=len(unique_training_examples),
+        upsampled_source_rows=upsampled_source_rows,
+        upsample_weights=upsample_weights,
     )
 
 
@@ -313,10 +505,23 @@ def print_data_summary(data: PreparedData) -> None:
     print(f"Rated rows read:       {data.rated_rows}")
     print(f"Complete target rows:  {data.rated_rows - data.incomplete_rows}")
     print(f"Incomplete rows skipped: {data.incomplete_rows}")
-    print(f"Training examples:     {len(data.train)}")
+    unique_training_examples = data.unique_training_examples or len(data.train)
+    print(f"Training examples:     {len(data.train)} (after upsampling)")
+    print(f"  unique training rows:{unique_training_examples:>5}")
+    print(
+        f"  duplicate copies:    "
+        f"{len(data.train) - unique_training_examples:>5}"
+    )
+    print(f"  upsampled rows:       {data.upsampled_source_rows:>5}")
+    if data.upsample_weights:
+        formatted_weights = ", ".join(
+            f"{HUMAN_LABEL_FIELDS.get(name, (None, name))[1]}={weight}"
+            for name, weight in data.upsample_weights.items()
+        )
+        print(f"  upsample weights:    {formatted_weights}")
     print(f"Validation examples:   {len(data.validation)}")
     print(f"  matched hand rows:   {data.matched_hand_rows}")
-    print(f"  random 5% candidates:{data.random_validation_rows:>5}")
+    print(f"  random validation rows:{data.random_validation_rows:>5}")
     print(f"Unusable hand rows:    {data.unmatched_hand_rows}")
     print(f"Prediction targets:    {len(data.target_names)}")
     for index, name in enumerate(data.target_names):
@@ -403,17 +608,266 @@ def scheduler_multiplier(
     return 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+def progress_timing(
+    start_time: float,
+    completed_steps: int,
+    total_steps: int,
+    current_time: float | None = None,
+) -> tuple[float, float | None]:
+    """Return elapsed seconds and a step-rate ETA in seconds."""
+    now = time.monotonic() if current_time is None else current_time
+    elapsed = max(0.0, now - start_time)
+    if completed_steps <= 0:
+        return elapsed, None
+    remaining_steps = max(0, total_steps - completed_steps)
+    return elapsed, elapsed * remaining_steps / completed_steps
+
+
+def format_duration(seconds: float | None) -> str:
+    if seconds is None or not math.isfinite(seconds):
+        return "--:--:--"
+    whole_seconds = max(0, round(seconds))
+    hours, remainder = divmod(whole_seconds, 3600)
+    minutes, seconds_part = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds_part:02d}"
+
+
+def absolute_probability_errors(logits: Any, targets: Any) -> Any:
+    """Elementwise |sigmoid(logit) - target probability| in float32."""
+    return (logits.float().sigmoid() - targets.float()).abs()
+
+
+def update_human_accuracy(
+    tallies: dict[str, AccuracyTally],
+    mean_probabilities: list[list[float]],
+    source_lines: list[int],
+    human_labels_by_source_line: dict[int, tuple[int | None, ...]],
+    filter_names: list[str],
+) -> None:
+    """Tally probabilistic correctness: p for label 1 and 1-p for label 0."""
+    if len(mean_probabilities) != len(source_lines):
+        raise ValueError("Each validation prediction row must have a source line.")
+
+    for probabilities, source_line in zip(mean_probabilities, source_lines):
+        labels = human_labels_by_source_line.get(source_line)
+        if labels is None:
+            continue
+        if len(probabilities) != len(filter_names) or len(labels) != len(filter_names):
+            raise ValueError("Human labels and probabilities must align with filter_names.")
+
+        for filter_index, filter_name in enumerate(filter_names):
+            label = labels[filter_index]
+            tally = tallies.get(filter_name)
+            if label is None or tally is None:
+                continue
+
+            probability = probabilities[filter_index]
+            if label == 1:
+                correctness_score = probability
+                tally.positive_total += 1
+                tally.positive_score_sum += correctness_score
+            elif label == 0:
+                correctness_score = 1.0 - probability
+                tally.negative_total += 1
+                tally.negative_score_sum += correctness_score
+            else:
+                # This metric is defined only for the binary hand labels 0 and 1.
+                continue
+            tally.overall_total += 1
+            tally.overall_score_sum += correctness_score
+
+
+def mean_accuracy(score_sum: float, total: int) -> float | None:
+    return None if total == 0 else score_sum / total
+
+
+def serialize_human_accuracy(
+    tallies: dict[str, AccuracyTally],
+) -> dict[str, dict[str, int | float | None]]:
+    return {
+        filter_name: {
+            "positive_accuracy": mean_accuracy(
+                tally.positive_score_sum, tally.positive_total
+            ),
+            "positive_score_sum": tally.positive_score_sum,
+            "positive_total": tally.positive_total,
+            "negative_accuracy": mean_accuracy(
+                tally.negative_score_sum, tally.negative_total
+            ),
+            "negative_score_sum": tally.negative_score_sum,
+            "negative_total": tally.negative_total,
+            "overall_accuracy": mean_accuracy(
+                tally.overall_score_sum, tally.overall_total
+            ),
+            "overall_score_sum": tally.overall_score_sum,
+            "overall_total": tally.overall_total,
+        }
+        for filter_name, tally in tallies.items()
+    }
+
+
+def format_accuracy_percentage(score_sum: float, total: int) -> str:
+    return "–" if total == 0 else f"{100.0 * score_sum / total:.1f}%"
+
+
+def format_human_accuracy_lines(
+    tallies: dict[str, AccuracyTally], filter_names: list[str]
+) -> list[str]:
+    lines: list[str] = []
+    for filter_name in filter_names:
+        field_spec = HUMAN_LABEL_FIELDS.get(filter_name)
+        tally = tallies.get(filter_name)
+        if field_spec is None or tally is None:
+            continue
+        display_name = field_spec[1]
+        lines.append(
+            f"{display_name:<13}—  Postive Acc : "
+            f"{format_accuracy_percentage(tally.positive_score_sum, tally.positive_total)} "
+            f"— Negative Acc : "
+            f"{format_accuracy_percentage(tally.negative_score_sum, tally.negative_total)} "
+            f"— Overall Acc "
+            f"{format_accuracy_percentage(tally.overall_score_sum, tally.overall_total)}"
+        )
+    return lines
+
+
+def write_validation_loss_plot(
+    path: Path,
+    points: list[tuple[int, float]],
+    total_steps: int,
+) -> None:
+    """Atomically write a dependency-free SVG validation-loss curve."""
+    finite_points = [(step, loss) for step, loss in points if math.isfinite(loss)]
+    if not finite_points:
+        return
+
+    width, height = 900, 520
+    left, right, top, bottom = 85, 35, 55, 75
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    losses = [loss for _, loss in finite_points]
+    loss_min = min(losses)
+    loss_max = max(losses)
+    loss_span = loss_max - loss_min
+    padding = max(0.01, loss_span * 0.1, loss_max * 0.05)
+    y_min = max(0.0, loss_min - padding)
+    y_max = loss_max + padding
+    if y_max <= y_min:
+        y_max = y_min + 0.01
+    x_max = max(1, total_steps, max(step for step, _ in finite_points))
+
+    def x_position(step: int) -> float:
+        return left + plot_width * max(0, step) / x_max
+
+    def y_position(loss: float) -> float:
+        return top + plot_height * (y_max - loss) / (y_max - y_min)
+
+    svg: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        '<text x="450" y="30" text-anchor="middle" font-family="sans-serif" '
+        'font-size="22" font-weight="bold">Validation Loss</text>',
+    ]
+
+    tick_count = 5
+    for tick in range(tick_count + 1):
+        fraction = tick / tick_count
+        y = top + plot_height * fraction
+        value = y_max - (y_max - y_min) * fraction
+        svg.append(
+            f'<line x1="{left}" y1="{y:.2f}" x2="{left + plot_width}" '
+            f'y2="{y:.2f}" stroke="#e5e7eb" stroke-width="1"/>'
+        )
+        svg.append(
+            f'<text x="{left - 10}" y="{y + 4:.2f}" text-anchor="end" '
+            f'font-family="monospace" font-size="12" fill="#374151">{value:.4f}</text>'
+        )
+
+    for tick in range(tick_count + 1):
+        fraction = tick / tick_count
+        x = left + plot_width * fraction
+        step = round(x_max * fraction)
+        svg.append(
+            f'<line x1="{x:.2f}" y1="{top}" x2="{x:.2f}" y2="{top + plot_height}" '
+            'stroke="#f3f4f6" stroke-width="1"/>'
+        )
+        svg.append(
+            f'<text x="{x:.2f}" y="{top + plot_height + 24}" text-anchor="middle" '
+            f'font-family="monospace" font-size="12" fill="#374151">{step}</text>'
+        )
+
+    coordinates = " ".join(
+        f"{x_position(step):.2f},{y_position(loss):.2f}"
+        for step, loss in finite_points
+    )
+    svg.extend(
+        [
+            f'<polyline points="{coordinates}" fill="none" stroke="#2563eb" '
+            'stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>',
+            *[
+                f'<circle cx="{x_position(step):.2f}" cy="{y_position(loss):.2f}" '
+                'r="4" fill="#2563eb"><title>'
+                f'step {step}: {loss:.6f}</title></circle>'
+                for step, loss in finite_points
+            ],
+            f'<line x1="{left}" y1="{top + plot_height}" x2="{left + plot_width}" '
+            f'y2="{top + plot_height}" stroke="#111827" stroke-width="2"/>',
+            f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}" '
+            'stroke="#111827" stroke-width="2"/>',
+            f'<text x="{left + plot_width / 2:.2f}" y="{height - 20}" '
+            'text-anchor="middle" font-family="sans-serif" font-size="15">Optimizer step</text>',
+            f'<text x="20" y="{top + plot_height / 2:.2f}" text-anchor="middle" '
+            'font-family="sans-serif" font-size="15" '
+            f'transform="rotate(-90 20 {top + plot_height / 2:.2f})">BCE loss</text>',
+            f'<text x="{left + plot_width}" y="45" text-anchor="end" '
+            'font-family="monospace" font-size="13" fill="#1d4ed8">'
+            f'latest: {finite_points[-1][1]:.6f} at step {finite_points[-1][0]}</text>',
+            "</svg>",
+        ]
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    temporary_path.write_text("\n".join(svg) + "\n", encoding="utf-8")
+    temporary_path.replace(path)
+
+
+def build_peft_lora_config(
+    lora_config_class: Any,
+    *,
+    rank: int,
+    alpha: int,
+    dropout: float,
+    target_modules: list[str],
+    use_rslora: bool,
+) -> Any:
+    return lora_config_class(
+        r=rank,
+        lora_alpha=alpha,
+        lora_dropout=dropout,
+        use_rslora=use_rslora,
+        bias="none",
+        target_modules=target_modules,
+    )
+
+
 def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path:
     torch, nn, functional, peft_api, transformers_api = import_training_dependencies()
     LoraConfig, get_peft_model = peft_api
     AutoModel, AutoTokenizer = transformers_api
     from torch.utils.data import DataLoader
+    from tqdm.auto import tqdm
 
     model_config = config["model"]
     lora_config = config["lora"]
     optimization = config["optimization"]
     logging_config = config["logging"]
     runtime = config["runtime"]
+
+    use_rslora = require(lora_config, "use_rslora", "lora")
+    if not isinstance(use_rslora, bool):
+        raise SystemExit("lora.use_rslora must be true or false.")
 
     seed = int(require(runtime, "seed", "runtime"))
     random.seed(seed)
@@ -441,6 +895,26 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
         "target_names": data.target_names,
         "target_scale": "rating / 10",
         "pooling": "token_position_zero",
+        "adapter_type": "rslora" if use_rslora else "lora",
+        "validation_loss_plot": "validation_loss.svg",
+        "validation_metrics": {
+            "loss": "mean binary cross-entropy with logits",
+            "mae": "mean(abs(sigmoid(logit) - target_probability))",
+            "human_accuracy": (
+                "probabilistic correctness from the mean judge probability: "
+                "p for hand label 1 and 1-p for hand label 0; reported overall "
+                "and by positive/negative hand-label class"
+            ),
+        },
+        "upsampling": {
+            "threshold": "mean configured-judge rating >= 2",
+            "weight_semantics": "total multiplicity; max qualifying filter weight",
+            "weights": data.upsample_weights,
+            "unique_training_examples": data.unique_training_examples,
+            "upsampled_source_rows": data.upsampled_source_rows,
+            "duplicate_copies_added": len(data.train) - data.unique_training_examples,
+            "training_examples_after_upsampling": len(data.train),
+        },
         "split": {
             "rated_rows": data.rated_rows,
             "incomplete_rows_skipped": data.incomplete_rows,
@@ -471,7 +945,7 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
         def __getitem__(self, index: int) -> Example:
             return self.examples[index]
 
-    def collate(examples: list[Example]) -> tuple[dict[str, Any], Any]:
+    def collate(examples: list[Example]) -> tuple[dict[str, Any], Any, list[int]]:
         encoded = tokenizer(
             [example.text for example in examples],
             padding=True,
@@ -480,7 +954,8 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
             return_tensors="pt",
         )
         targets = torch.tensor([example.targets for example in examples], dtype=torch.float32)
-        return dict(encoded), targets
+        source_lines = [example.source_line for example in examples]
+        return dict(encoded), targets, source_lines
 
     batch_size = int(require(optimization, "batch_size", "optimization"))
     epochs = int(require(optimization, "epochs", "optimization"))
@@ -524,12 +999,13 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
         raise SystemExit("lora.target_modules must be a list of module names.")
     encoder = get_peft_model(
         encoder,
-        LoraConfig(
-            r=rank,
-            lora_alpha=alpha,
-            lora_dropout=dropout,
-            bias="none",
+        build_peft_lora_config(
+            LoraConfig,
+            rank=rank,
+            alpha=alpha,
+            dropout=dropout,
             target_modules=target_modules,
+            use_rslora=use_rslora,
         ),
     )
     unexpected_trainable = [
@@ -596,24 +1072,56 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
         outputs = encoder(**encoded)
         return prediction_head(outputs.last_hidden_state[:, 0, :])
 
-    def validation_loss() -> float:
+    def validation_metrics() -> ValidationMetrics:
         encoder.eval()
         prediction_head.eval()
         loss_sum = 0.0
+        absolute_error_sum = 0.0
         element_count = 0
+        human_accuracy = {
+            filter_name: AccuracyTally()
+            for filter_name in data.filter_names
+            if filter_name in HUMAN_LABEL_FIELDS
+        }
         with torch.no_grad():
-            for encoded, targets in validation_loader:
+            for encoded, targets, source_lines in validation_loader:
                 encoded = {key: value.to(device, non_blocking=True) for key, value in encoded.items()}
                 targets = targets.to(device, non_blocking=True)
                 with autocast_context():
+                    logits = forward_logits(encoded)
                     losses = functional.binary_cross_entropy_with_logits(
-                        forward_logits(encoded), targets, reduction="none"
+                        logits, targets, reduction="none"
                     )
+                absolute_errors = absolute_probability_errors(logits, targets)
                 loss_sum += losses.float().sum().item()
+                absolute_error_sum += absolute_errors.float().sum().item()
                 element_count += losses.numel()
+                mean_probabilities = (
+                    logits.float()
+                    .sigmoid()
+                    .reshape(
+                        logits.shape[0],
+                        len(data.filter_names),
+                        len(data.judge_names),
+                    )
+                    .mean(dim=2)
+                    .cpu()
+                    .tolist()
+                )
+                update_human_accuracy(
+                    human_accuracy,
+                    mean_probabilities,
+                    source_lines,
+                    data.human_labels_by_source_line,
+                    data.filter_names,
+                )
         encoder.train()
         prediction_head.train()
-        return loss_sum / element_count
+        return ValidationMetrics(
+            loss=loss_sum / element_count,
+            mae=absolute_error_sum / element_count,
+            human_accuracy=human_accuracy,
+        )
 
     def append_log(event: dict[str, Any]) -> None:
         event = {"time": datetime.now(timezone.utc).isoformat(), **event}
@@ -621,7 +1129,11 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
             log_file.write(json.dumps(event, ensure_ascii=False) + "\n")
             log_file.flush()
 
-    def save_weights(directory: Path, step: int, val_loss: float | None) -> None:
+    def save_weights(
+        directory: Path,
+        step: int,
+        metrics: ValidationMetrics | None,
+    ) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         encoder.save_pretrained(
             directory / "adapter",
@@ -633,7 +1145,13 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
             directory / "checkpoint.json",
             {
                 "global_step": step,
-                "validation_loss": val_loss,
+                "validation_loss": None if metrics is None else metrics.loss,
+                "validation_mae": None if metrics is None else metrics.mae,
+                "human_accuracy": (
+                    None
+                    if metrics is None
+                    else serialize_human_accuracy(metrics.human_accuracy)
+                ),
                 "target_names": data.target_names,
                 "base_model_path": str(base_model_path),
                 "prediction_head": {
@@ -658,6 +1176,10 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
             "epochs": epochs,
             "total_steps": total_steps,
             "train_examples": len(data.train),
+            "unique_training_examples": data.unique_training_examples,
+            "upsampled_source_rows": data.upsampled_source_rows,
+            "duplicate_copies_added": len(data.train) - data.unique_training_examples,
+            "upsample_weights": data.upsample_weights,
             "validation_examples": len(data.validation),
             "precision": precision,
         }
@@ -670,11 +1192,20 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
     running_loss = 0.0
     running_count = 0
     best_validation_loss = math.inf
-    latest_validation_loss: float | None = None
+    mae_at_best_validation_loss: float | None = None
+    latest_validation_metrics: ValidationMetrics | None = None
+    validation_history: list[tuple[int, float]] = []
     last_validation_step = -1
+    training_start_time = time.monotonic()
+    progress_bar = tqdm(
+        total=total_steps,
+        desc="Training",
+        unit="step",
+        dynamic_ncols=True,
+    )
 
     for epoch in range(1, epochs + 1):
-        for encoded, targets in train_loader:
+        for encoded, targets, _source_lines in train_loader:
             global_step += 1
             encoded = {key: value.to(device, non_blocking=True) for key, value in encoded.items()}
             targets = targets.to(device, non_blocking=True)
@@ -699,13 +1230,25 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
 
             running_loss += loss.detach().float().item()
             running_count += 1
+            learning_rate_now = scheduler.get_last_lr()[0]
+            progress_bar.update(1)
+            progress_bar.set_postfix(
+                loss=f"{loss.detach().float().item():.4f}",
+                lr=f"{learning_rate_now:.2e}",
+            )
             if global_step % log_every == 0:
                 mean_loss = running_loss / running_count
-                learning_rate_now = scheduler.get_last_lr()[0]
-                print(
+                elapsed_seconds, eta_seconds = progress_timing(
+                    training_start_time,
+                    global_step,
+                    total_steps,
+                )
+                progress_bar.write(
                     f"step {global_step}/{total_steps} epoch {epoch} "
                     f"loss={mean_loss:.6f} grad_norm={float(grad_norm):.4f} "
-                    f"lr={learning_rate_now:.3e}"
+                    f"lr={learning_rate_now:.3e} "
+                    f"elapsed={format_duration(elapsed_seconds)} "
+                    f"eta={format_duration(eta_seconds)}"
                 )
                 append_log(
                     {
@@ -715,50 +1258,148 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
                         "loss": mean_loss,
                         "grad_norm": float(grad_norm),
                         "learning_rate": learning_rate_now,
+                        "elapsed_seconds": elapsed_seconds,
+                        "eta_seconds": eta_seconds,
                     }
                 )
                 running_loss = 0.0
                 running_count = 0
 
             if global_step % val_every == 0:
-                current_validation_loss = validation_loss()
-                latest_validation_loss = current_validation_loss
+                progress_bar.set_description("Validating")
+                current_validation_metrics = validation_metrics()
+                progress_bar.set_description("Training")
+                latest_validation_metrics = current_validation_metrics
+                validation_history.append(
+                    (global_step, current_validation_metrics.loss)
+                )
+                write_validation_loss_plot(
+                    run_directory / "validation_loss.svg",
+                    validation_history,
+                    total_steps,
+                )
                 last_validation_step = global_step
-                print(f"step {global_step}/{total_steps} validation_loss={current_validation_loss:.6f}")
+                elapsed_seconds, eta_seconds = progress_timing(
+                    training_start_time,
+                    global_step,
+                    total_steps,
+                )
+                validation_line = (
+                    f"step {global_step}/{total_steps} "
+                    f"validation_loss={current_validation_metrics.loss:.6f} "
+                    f"validation_mae={current_validation_metrics.mae:.6f} "
+                    f"elapsed={format_duration(elapsed_seconds)} "
+                    f"eta={format_duration(eta_seconds)}"
+                )
+                progress_bar.write("")
+                progress_bar.write(validation_line)
+                for accuracy_line in format_human_accuracy_lines(
+                    current_validation_metrics.human_accuracy,
+                    data.filter_names,
+                ):
+                    progress_bar.write(accuracy_line)
+                progress_bar.write("")
                 append_log(
                     {
                         "event": "validation",
                         "step": global_step,
                         "epoch": epoch,
-                        "loss": current_validation_loss,
+                        "loss": current_validation_metrics.loss,
+                        "mae": current_validation_metrics.mae,
+                        "human_accuracy": serialize_human_accuracy(
+                            current_validation_metrics.human_accuracy
+                        ),
+                        "elapsed_seconds": elapsed_seconds,
+                        "eta_seconds": eta_seconds,
                     }
                 )
-                if current_validation_loss < best_validation_loss:
-                    best_validation_loss = current_validation_loss
-                    save_weights(run_directory / "best", global_step, current_validation_loss)
+                if current_validation_metrics.loss < best_validation_loss:
+                    best_validation_loss = current_validation_metrics.loss
+                    mae_at_best_validation_loss = current_validation_metrics.mae
+                    save_weights(
+                        run_directory / "best",
+                        global_step,
+                        current_validation_metrics,
+                    )
+
+    progress_bar.close()
 
     if last_validation_step != global_step:
-        current_validation_loss = validation_loss()
-        latest_validation_loss = current_validation_loss
-        print(f"step {global_step}/{total_steps} validation_loss={current_validation_loss:.6f}")
+        current_validation_metrics = validation_metrics()
+        latest_validation_metrics = current_validation_metrics
+        validation_history.append((global_step, current_validation_metrics.loss))
+        write_validation_loss_plot(
+            run_directory / "validation_loss.svg",
+            validation_history,
+            total_steps,
+        )
+        elapsed_seconds, eta_seconds = progress_timing(
+            training_start_time,
+            global_step,
+            total_steps,
+        )
+        validation_line = (
+            f"step {global_step}/{total_steps} "
+            f"validation_loss={current_validation_metrics.loss:.6f} "
+            f"validation_mae={current_validation_metrics.mae:.6f} "
+            f"elapsed={format_duration(elapsed_seconds)} "
+            f"eta={format_duration(eta_seconds)}"
+        )
+        print()
+        print(validation_line)
+        for accuracy_line in format_human_accuracy_lines(
+            current_validation_metrics.human_accuracy,
+            data.filter_names,
+        ):
+            print(accuracy_line)
+        print()
         append_log(
             {
                 "event": "validation",
                 "step": global_step,
                 "epoch": epochs,
-                "loss": current_validation_loss,
+                "loss": current_validation_metrics.loss,
+                "mae": current_validation_metrics.mae,
+                "human_accuracy": serialize_human_accuracy(
+                    current_validation_metrics.human_accuracy
+                ),
+                "elapsed_seconds": elapsed_seconds,
+                "eta_seconds": eta_seconds,
             }
         )
-        if current_validation_loss < best_validation_loss:
-            best_validation_loss = current_validation_loss
-            save_weights(run_directory / "best", global_step, current_validation_loss)
+        if current_validation_metrics.loss < best_validation_loss:
+            best_validation_loss = current_validation_metrics.loss
+            mae_at_best_validation_loss = current_validation_metrics.mae
+            save_weights(
+                run_directory / "best",
+                global_step,
+                current_validation_metrics,
+            )
 
-    save_weights(run_directory / "final", global_step, latest_validation_loss)
+    save_weights(run_directory / "final", global_step, latest_validation_metrics)
+    total_elapsed_seconds, _ = progress_timing(
+        training_start_time,
+        global_step,
+        total_steps,
+    )
     append_log(
         {
             "event": "complete",
             "step": global_step,
             "best_validation_loss": best_validation_loss,
+            "mae_at_best_validation_loss": mae_at_best_validation_loss,
+            "latest_validation_loss": (
+                None if latest_validation_metrics is None else latest_validation_metrics.loss
+            ),
+            "latest_validation_mae": (
+                None if latest_validation_metrics is None else latest_validation_metrics.mae
+            ),
+            "latest_human_accuracy": (
+                None
+                if latest_validation_metrics is None
+                else serialize_human_accuracy(latest_validation_metrics.human_accuracy)
+            ),
+            "elapsed_seconds": total_elapsed_seconds,
         }
     )
     print(f"Training complete. Best validation loss: {best_validation_loss:.6f}")
