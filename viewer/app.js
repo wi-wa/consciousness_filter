@@ -2,6 +2,14 @@ const DATA_URLS = [
   "../data/fineweb_edu_88k_rated.jsonl",
 ];
 
+// Optional, separately generated ratings are merged into matching live rows.
+// A missing overlay is harmless: the viewer continues with the LLM ratings.
+const RATING_OVERLAY_URLS = [
+  "../data/hand_annotated_embedding_ratings.jsonl",
+];
+
+const PREFIX_MATCH_CHARS = 200;
+
 const LEGACY_FILTER = "philosophy_of_mind";
 const LEGACY_MODEL = "(legacy)";
 
@@ -79,7 +87,7 @@ const els = {
 };
 
 function isValidRating(value) {
-  return Number.isInteger(value) && value >= 0 && value <= 10;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 10;
 }
 
 // Returns {filterName: {model: {rating, explanation, quote}}} for a JSONL row,
@@ -141,6 +149,44 @@ function parseJsonl(text) {
   }
 
   return rows;
+}
+
+// Join an optional rating file to the already loaded live corpus. Exact text
+// wins; a 200-character prefix is the same fallback used for hand labels.
+// Existing model names are never replaced.
+function mergeRatingOverlay(documents, overlayDocuments) {
+  const byText = new Map();
+  const byPrefix = new Map();
+  for (const doc of documents) {
+    byText.set(doc.text, doc);
+    const prefix = doc.text.slice(0, PREFIX_MATCH_CHARS);
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, doc);
+  }
+
+  let matchedRows = 0;
+  let addedRatings = 0;
+  let collisions = 0;
+  for (const overlay of overlayDocuments) {
+    const matched =
+      byText.get(overlay.text) ??
+      byPrefix.get(overlay.text.slice(0, PREFIX_MATCH_CHARS)) ??
+      null;
+    if (!matched) continue;
+
+    matchedRows += 1;
+    for (const [filterName, entries] of Object.entries(overlay.ratings)) {
+      const destination = (matched.ratings[filterName] ??= {});
+      for (const [model, entry] of Object.entries(entries)) {
+        if (model in destination) {
+          collisions += 1;
+          continue;
+        }
+        destination[model] = entry;
+        addedRatings += 1;
+      }
+    }
+  }
+  return { matchedRows, addedRatings, collisions };
 }
 
 function getEntries(doc) {
@@ -436,7 +482,7 @@ function buildJudgementCard(model, entry) {
 
   const rating = document.createElement("span");
   rating.className = "judgement-rating";
-  rating.textContent = String(entry.rating);
+  rating.textContent = formatMean(entry.rating);
 
   header.append(name, meter, rating);
   card.append(header);
@@ -1367,6 +1413,30 @@ async function loadDocuments() {
     if (documents.length === 0) {
       errors.push(`${url}: no rated rows`);
       continue;
+    }
+
+    for (const overlayUrl of RATING_OVERLAY_URLS) {
+      try {
+        const overlayResponse = await fetch(`${overlayUrl}?t=${Date.now()}`);
+        if (!overlayResponse.ok) {
+          if (overlayResponse.status !== 404) {
+            console.warn(`Could not load rating overlay ${overlayUrl}: HTTP ${overlayResponse.status}`);
+          }
+          continue;
+        }
+        const overlayDocuments = parseJsonl(await overlayResponse.text());
+        const result = mergeRatingOverlay(documents, overlayDocuments);
+        if (result.collisions > 0) {
+          console.warn(
+            `Skipped ${result.collisions} overlay rating collision(s) from ${overlayUrl}; existing ratings were preserved.`,
+          );
+        }
+        console.info(
+          `Merged ${result.addedRatings} ratings from ${result.matchedRows} rows in ${overlayUrl}.`,
+        );
+      } catch (error) {
+        console.warn(`Could not load rating overlay ${overlayUrl}: ${error.message}`);
+      }
     }
 
     state.documents = documents;

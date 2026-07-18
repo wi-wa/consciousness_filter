@@ -3,7 +3,7 @@
     "rated_path": "embedding_model/data/fineweb_edu_88k_rated.jsonl",
     "hand_annotations_path": "embedding_model/data/hand_annotated_samples.jsonl",
     "rating_config_path": "config.json",
-    "validation_fraction": 0.1,
+    "validation_fraction": 0.12,
     "prefix_match_chars": 200,
     "upsample_mult": {
       "pom": 8,
@@ -30,10 +30,10 @@
     ]
   },
   "optimization": {
-    "epochs": 3,
+    "epochs": 4,
     "batch_size": 32,
     "learning_rate": 5e-4,
-    "betas": [0.95, 0.99],
+    "betas": [0.98, 0.99],
     "weight_decay": 20.0,
     "max_grad_norm": 1.0,
     "warmup_fraction": 0.1,
@@ -41,7 +41,7 @@
   },
   "logging": {
     "log_every": 1,
-    "val_every": 10,
+    "val_every": 20,
     "checkpoint_dir": "embedding_model/checkpoints"
   },
   "runtime": {
