@@ -37,6 +37,6 @@
   "run": {
     "batch_size": 64,
     "max_concurrent_requests": 128,
-    "max_documents": 8000
+    "max_documents": 12000
   }
 }
