@@ -3,7 +3,7 @@
     "rated_path": "embedding_model/data/fineweb_edu_88k_rated.jsonl",
     "hand_annotations_path": "embedding_model/data/hand_annotated_samples.jsonl",
     "rating_config_path": "config.json",
-    "validation_fraction": 0.12,
+    "validation_fraction": 0.13,
     "prefix_match_chars": 200,
     "upsample_mult": {
       "pom": 8,
@@ -30,9 +30,9 @@
     ]
   },
   "optimization": {
-    "epochs": 4,
+    "epochs": 12,
     "batch_size": 32,
-    "learning_rate": 5e-4,
+    "learning_rate": 4e-4,
     "betas": [0.98, 0.99],
     "weight_decay": 20.0,
     "max_grad_norm": 1.0,
