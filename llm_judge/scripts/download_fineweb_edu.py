@@ -14,10 +14,11 @@ from tqdm import tqdm
 
 
 REPO_ID = "HuggingFaceFW/fineweb-edu"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SAMPLE_PREFIX = "sample/10BT"
 DEFAULT_COUNT = 88_196
 DEFAULT_MAX_CHARACTERS = 8_192
-DEFAULT_OUTPUT = Path("data/fineweb_edu_88k.jsonl")
+DEFAULT_OUTPUT = REPO_ROOT / "llm_judge/data/fineweb_edu_88k.jsonl"
 DEFAULT_BATCH_SIZE = 1_024
 
 

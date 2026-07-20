@@ -3,7 +3,7 @@
 
 Usage:
 
-    python scripts/embedding_handlabel_rater.py \
+    python embedding_model/embedding_handlabel_rater.py \
         embedding_model/checkpoints/run_YYYYMMDD_HHMMSS_utc/best
 
 The positional path must resolve inside ``embedding_model/checkpoints``. It may
@@ -13,7 +13,7 @@ live LLM-rated JSONL are always read-only. Hand rows are exact-matched, then
 200-character-prefix-matched, to the live rated rows so both kinds of judge
 score refer to the same document text. Results atomically replace:
 
-    data/hand_annotated_embedding_ratings.jsonl
+    llm_judge/data/hand_annotated_embedding_ratings.jsonl
 
 For each filter, the script applies sigmoid to every distilled judge head,
 averages those probabilities, and multiplies by 10 for the viewer's scale.
@@ -33,9 +33,9 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHECKPOINT_ROOT = REPO_ROOT / "embedding_model/checkpoints"
-HAND_ANNOTATIONS_PATH = REPO_ROOT / "data/hand_annotated_samples.jsonl"
-LIVE_RATED_PATH = REPO_ROOT / "data/fineweb_edu_88k_rated.jsonl"
-OUTPUT_PATH = REPO_ROOT / "data/hand_annotated_embedding_ratings.jsonl"
+HAND_ANNOTATIONS_PATH = REPO_ROOT / "llm_judge/data/hand_annotated_samples.jsonl"
+LIVE_RATED_PATH = REPO_ROOT / "llm_judge/data/fineweb_edu_88k_rated.jsonl"
+OUTPUT_PATH = REPO_ROOT / "llm_judge/data/hand_annotated_embedding_ratings.jsonl"
 PREFIX_MATCH_CHARS = 200
 
 

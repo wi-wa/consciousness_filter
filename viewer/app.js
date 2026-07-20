@@ -1,11 +1,11 @@
 const DATA_URLS = [
-  "../data/fineweb_edu_88k_rated.jsonl",
+  "../llm_judge/data/fineweb_edu_88k_rated.jsonl",
 ];
 
 // Optional, separately generated ratings are merged into matching live rows.
 // A missing overlay is harmless: the viewer continues with the LLM ratings.
 const RATING_OVERLAY_URLS = [
-  "../data/hand_annotated_embedding_ratings.jsonl",
+  "../llm_judge/data/hand_annotated_embedding_ratings.jsonl",
 ];
 
 const PREFIX_MATCH_CHARS = 200;
@@ -13,8 +13,8 @@ const PREFIX_MATCH_CHARS = 200;
 const LEGACY_FILTER = "philosophy_of_mind";
 const LEGACY_MODEL = "(legacy)";
 
-const CONFIG_URL = "../config.json";
-const ANNOTATIONS_URL = "../data/hand_annotated_samples.jsonl";
+const CONFIG_URL = "../llm_judge/config.json";
+const ANNOTATIONS_URL = "../llm_judge/data/hand_annotated_samples.jsonl";
 
 // Hand-annotation JSONL keys -> rated-output filter names.
 const HUMAN_LABEL_FILTERS = [
@@ -1107,7 +1107,7 @@ function renderModelStats(items) {
     const empty = document.createElement("div");
     empty.className = "ann-note";
     empty.textContent =
-      "No model ratings for this filter yet. Run scripts/rerate_hand_annotated.py " +
+      "No model ratings for this filter yet. Run llm_judge/scripts/rerate_hand_annotated.py " +
       "to rate the hand-annotated samples, then reload.";
     els.modelStatsList.replaceChildren(empty);
     return;
@@ -1463,7 +1463,7 @@ async function main() {
     els.documentText.textContent =
       `${error.message}\n\n` +
       "Serve the repository root (e.g. python -m http.server) and open /viewer/ " +
-      "so the browser can fetch the rated JSONL from /data/.";
+      "so the browser can fetch the rated JSONL from /llm_judge/data/.";
   }
 }
 

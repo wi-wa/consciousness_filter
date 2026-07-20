@@ -132,6 +132,12 @@ async def fill_hand_ratings(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=rater.DEFAULT_CONFIG,
+        help=f"Rating config (default: {rater.DEFAULT_CONFIG})",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--hard-refresh",
@@ -145,7 +151,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config = rater.load_config(Path("config.json"))
+    config = rater.load_config(args.config.resolve())
 
     if args.check:
         dataset, matched_indexes, _ = load_hand_scope(config)

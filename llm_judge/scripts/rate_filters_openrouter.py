@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fill missing document ratings through OpenRouter without replacing existing data.
 
-All settings live in config.json. Within the first run.max_documents input
+All settings live in llm_judge/config.json. Within the first run.max_documents input
 documents, each configured filter prompt is run with each configured model. The
 model must answer with tagged fields (<explanation>, <quote>, <rating>), which
 are stored per filter as a list with one entry per model:
@@ -71,6 +71,10 @@ from typing import Any
 import httpx
 from tqdm import tqdm
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG = REPO_ROOT / "llm_judge/config.json"
+DEFAULT_DOTENV = REPO_ROOT / ".env"
+
 EXPLANATION_RE = re.compile(
     r"<explanation>((?:(?!<explanation>).)*?)</explanation>", re.DOTALL | re.IGNORECASE
 )
@@ -129,6 +133,13 @@ class Config:
     max_documents: int | None
 
 
+def resolve_repo_path(value: Any, context: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"Expected a non-empty path string for {context}.")
+    path = Path(value)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
 def load_config(config_path: Path) -> Config:
     if not config_path.exists():
         raise SystemExit(f"Config file does not exist: {config_path}")
@@ -150,7 +161,10 @@ def load_config(config_path: Path) -> Config:
     filters: list[FilterSpec] = []
     for entry in filters_raw:
         name = require(entry, "name", "a filters entry")
-        prompt_path = Path(require(entry, "prompt_path", f"filter {name!r}"))
+        prompt_path = resolve_repo_path(
+            require(entry, "prompt_path", f"filter {name!r}"),
+            f"filter {name!r} prompt_path",
+        )
         if not prompt_path.exists():
             raise SystemExit(f"Prompt file for filter {name!r} does not exist: {prompt_path}")
         prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -168,7 +182,10 @@ def load_config(config_path: Path) -> Config:
     if len(set(filter_names)) != len(filter_names):
         raise SystemExit(f"Duplicate filter names in config: {filter_names}")
 
-    grading_instruction_path = Path(require(raw, "grading_instruction_path", "top level"))
+    grading_instruction_path = resolve_repo_path(
+        require(raw, "grading_instruction_path", "top level"),
+        "grading_instruction_path",
+    )
     if not grading_instruction_path.exists():
         raise SystemExit(f"Grading instruction file does not exist: {grading_instruction_path}")
     grading_instruction = grading_instruction_path.read_text(encoding="utf-8")
@@ -188,10 +205,15 @@ def load_config(config_path: Path) -> Config:
         raise SystemExit("run.max_documents must be null or a positive integer.")
 
     config = Config(
-        input_jsonl=Path(require(raw, "input_jsonl", "top level")),
-        output_jsonl=Path(require(raw, "output_jsonl", "top level")),
-        hand_annotations_jsonl=Path(
-            require(raw, "hand_annotations_jsonl", "top level")
+        input_jsonl=resolve_repo_path(
+            require(raw, "input_jsonl", "top level"), "input_jsonl"
+        ),
+        output_jsonl=resolve_repo_path(
+            require(raw, "output_jsonl", "top level"), "output_jsonl"
+        ),
+        hand_annotations_jsonl=resolve_repo_path(
+            require(raw, "hand_annotations_jsonl", "top level"),
+            "hand_annotations_jsonl",
         ),
         filters=filters,
         grading_instruction=grading_instruction,
@@ -220,7 +242,7 @@ def load_config(config_path: Path) -> Config:
     return config
 
 
-def load_dotenv(path: Path = Path(".env")) -> None:
+def load_dotenv(path: Path = DEFAULT_DOTENV) -> None:
     if not path.exists():
         return
 
@@ -881,13 +903,19 @@ async def rate_jsonl(config: Config) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        help=f"Rating config (default: {DEFAULT_CONFIG})",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Print aggregate missing counts without backups, API calls, or writes.",
     )
     args = parser.parse_args()
 
-    config = load_config(Path("config.json"))
+    config = load_config(args.config.resolve())
     if args.check:
         scope = load_main_scope(config)
         print(format_missing_stats(missing_stats(config, main_scope_rows(scope))))
