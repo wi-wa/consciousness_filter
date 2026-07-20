@@ -1,16 +1,25 @@
 {
-  "dataset": {
-    "repo_id": "HuggingFaceFW/fineweb-edu",
-    "revision": "main",
-    "sample_prefix": "sample/10BT"
+  "download_settings" : {
+    "dataset": {
+      "repo_id": "HuggingFaceFW/fineweb-edu",
+      "revision": "main",
+      "sample_prefix": "sample/10BT"
+    },
+    "output_jsonl": "full_pretrain_filter/data/fineweb_edu.jsonl",
+    "exclude_jsonl": [
+      "llm_judge/data/fineweb_edu_88k.jsonl",
+      "embedding_model/data/fineweb_edu_88k_rated.jsonl",
+      "embedding_model/data/hand_annotated_samples.jsonl"
+    ],
+
+    "target_tokens": 1000000000,
+    "min_document_tokens": 256,
+    "max_document_tokens": 2048,
+    "parquet_batch_size": 4096
   },
-  "output_jsonl": "full_pretrain_filter/data/fineweb_edu.jsonl",
-  "exclude_jsonl": [
-    "embedding_model/data/fineweb_edu_88k_rated.jsonl",
-    "embedding_model/data/hand_annotated_samples.jsonl"
-  ],
-  "target_tokens": 1000000000,
-  "min_document_tokens": 512,
-  "max_document_tokens": 4096,
-  "parquet_batch_size": 1024
+  "filter_settings" : {
+    "model" : "test_run",
+    "batch_size" : 256,
+    "batch_shuffle_seed" : 42
+  }
 }

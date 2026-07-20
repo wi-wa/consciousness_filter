@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download a token-bounded FineWeb-Edu corpus disjoint from embedding data.
+"""Download a token-bounded FineWeb-Edu corpus disjoint from prior corpora.
 
 FineWeb-Edu publishes a GPT-2 ``token_count`` for each document. This script
 uses that field for both the per-document bounds and the total token target, so
@@ -49,13 +49,21 @@ class ExistingOutput:
     tokens: int
 
 
+@dataclass(frozen=True)
+class CorpusAudit:
+    documents: int
+    tokens: int
+    excluded_documents: int
+    excluded_tokens: int
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
         type=Path,
         default=DEFAULT_CONFIG,
-        help=f"Download config (default: {DEFAULT_CONFIG})",
+        help=f"Full-pretrain config (default: {DEFAULT_CONFIG})",
     )
     output_mode = parser.add_mutually_exclusive_group()
     output_mode.add_argument(
@@ -67,6 +75,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--overwrite",
         action="store_true",
         help="Replace any existing complete or partial output after success.",
+    )
+    output_mode.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify that the completed output is disjoint from every exclusion.",
+    )
+    output_mode.add_argument(
+        "--repair-overlap",
+        action="store_true",
+        help=(
+            "Remove excluded documents from a completed output and download "
+            "replacements until target_tokens is restored."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -106,55 +127,90 @@ def load_config(path: Path) -> DownloadConfig:
 
     if not isinstance(raw_config, dict):
         raise SystemExit(f"Config must be a JSON object: {path}")
-    dataset = require(raw_config, "dataset", str(path))
+    download_settings = require(raw_config, "download_settings", str(path))
+    if not isinstance(download_settings, dict):
+        raise SystemExit("config.download_settings must be an object.")
+    dataset = require(
+        download_settings, "dataset", "config.download_settings"
+    )
     if not isinstance(dataset, dict):
-        raise SystemExit("config.dataset must be an object.")
+        raise SystemExit("config.download_settings.dataset must be an object.")
 
-    raw_exclusions = require(raw_config, "exclude_jsonl", str(path))
+    raw_exclusions = require(
+        download_settings, "exclude_jsonl", "config.download_settings"
+    )
     if not isinstance(raw_exclusions, list) or not raw_exclusions:
-        raise SystemExit("config.exclude_jsonl must be a non-empty list of paths.")
+        raise SystemExit(
+            "config.download_settings.exclude_jsonl must be a non-empty list of paths."
+        )
 
     config = DownloadConfig(
         repo_id=require_nonempty_string(
-            require(dataset, "repo_id", "config.dataset"), "config.dataset.repo_id"
+            require(dataset, "repo_id", "config.download_settings.dataset"),
+            "config.download_settings.dataset.repo_id",
         ),
         revision=require_nonempty_string(
-            require(dataset, "revision", "config.dataset"),
-            "config.dataset.revision",
+            require(dataset, "revision", "config.download_settings.dataset"),
+            "config.download_settings.dataset.revision",
         ),
         sample_prefix=require_nonempty_string(
-            require(dataset, "sample_prefix", "config.dataset"),
-            "config.dataset.sample_prefix",
+            require(
+                dataset, "sample_prefix", "config.download_settings.dataset"
+            ),
+            "config.download_settings.dataset.sample_prefix",
         ).strip("/"),
         output_jsonl=resolve_repo_path(
-            require(raw_config, "output_jsonl", str(path)), "config.output_jsonl"
+            require(
+                download_settings, "output_jsonl", "config.download_settings"
+            ),
+            "config.download_settings.output_jsonl",
         ),
         exclude_jsonl=tuple(
-            resolve_repo_path(value, f"config.exclude_jsonl[{index}]")
+            resolve_repo_path(
+                value, f"config.download_settings.exclude_jsonl[{index}]"
+            )
             for index, value in enumerate(raw_exclusions)
         ),
         target_tokens=require_positive_int(
-            require(raw_config, "target_tokens", str(path)), "config.target_tokens"
+            require(
+                download_settings, "target_tokens", "config.download_settings"
+            ),
+            "config.download_settings.target_tokens",
         ),
         min_document_tokens=require_positive_int(
-            require(raw_config, "min_document_tokens", str(path)),
-            "config.min_document_tokens",
+            require(
+                download_settings,
+                "min_document_tokens",
+                "config.download_settings",
+            ),
+            "config.download_settings.min_document_tokens",
         ),
         max_document_tokens=require_positive_int(
-            require(raw_config, "max_document_tokens", str(path)),
-            "config.max_document_tokens",
+            require(
+                download_settings,
+                "max_document_tokens",
+                "config.download_settings",
+            ),
+            "config.download_settings.max_document_tokens",
         ),
         parquet_batch_size=require_positive_int(
-            require(raw_config, "parquet_batch_size", str(path)),
-            "config.parquet_batch_size",
+            require(
+                download_settings,
+                "parquet_batch_size",
+                "config.download_settings",
+            ),
+            "config.download_settings.parquet_batch_size",
         ),
     )
     if config.min_document_tokens > config.max_document_tokens:
         raise SystemExit(
-            "config.min_document_tokens cannot exceed config.max_document_tokens."
+            "config.download_settings.min_document_tokens cannot exceed "
+            "config.download_settings.max_document_tokens."
         )
     if config.output_jsonl in config.exclude_jsonl:
-        raise SystemExit("config.output_jsonl cannot also be an exclusion path.")
+        raise SystemExit(
+            "config.download_settings.output_jsonl cannot also be an exclusion path."
+        )
     return config
 
 
@@ -287,6 +343,166 @@ def partial_path_for(output_path: Path) -> Path:
     return output_path.with_name(output_path.name + ".partial")
 
 
+def audit_corpus(
+    config: DownloadConfig, path: Path, excluded_digests: set[bytes]
+) -> CorpusAudit:
+    documents = 0
+    tokens = 0
+    excluded_documents = 0
+    excluded_tokens = 0
+    for line_number, row in iter_jsonl(path):
+        text = row.get("text")
+        token_count = row.get("token_count")
+        if not isinstance(text, str):
+            raise SystemExit(f"{path}:{line_number} has no string 'text' field.")
+        if (
+            not isinstance(token_count, int)
+            or isinstance(token_count, bool)
+            or not config.min_document_tokens
+            <= token_count
+            <= config.max_document_tokens
+        ):
+            raise SystemExit(
+                f"{path}:{line_number} has invalid token_count {token_count!r}; "
+                f"expected [{config.min_document_tokens}, "
+                f"{config.max_document_tokens}]."
+            )
+        documents += 1
+        tokens += token_count
+        if text_digest(text) in excluded_digests:
+            excluded_documents += 1
+            excluded_tokens += token_count
+    return CorpusAudit(
+        documents=documents,
+        tokens=tokens,
+        excluded_documents=excluded_documents,
+        excluded_tokens=excluded_tokens,
+    )
+
+
+def verify_completed_output(config: DownloadConfig) -> CorpusAudit:
+    if not config.output_jsonl.exists():
+        raise SystemExit(f"Completed output does not exist: {config.output_jsonl}")
+    excluded_digests = load_exclusion_digests(config.exclude_jsonl)
+    audit = audit_corpus(config, config.output_jsonl, excluded_digests)
+    print(
+        f"Audited {audit.documents:,} documents and {audit.tokens:,} tokens in "
+        f"{config.output_jsonl}."
+    )
+    if audit.excluded_documents:
+        raise SystemExit(
+            f"Disjointness check failed: {audit.excluded_documents:,} documents "
+            f"({audit.excluded_tokens:,} tokens) occur in configured exclusions."
+        )
+    print("Disjointness check passed: 0 documents occur in configured exclusions.")
+    return audit
+
+
+def write_repaired_partial(
+    config: DownloadConfig,
+    excluded_digests: set[bytes],
+    destination: Path,
+) -> CorpusAudit:
+    documents = 0
+    tokens = 0
+    excluded_documents = 0
+    excluded_tokens = 0
+    with destination.open("x", encoding="utf-8", newline="\n") as output_file:
+        for line_number, row in iter_jsonl(config.output_jsonl):
+            text = row.get("text")
+            token_count = row.get("token_count")
+            if not isinstance(text, str):
+                raise SystemExit(
+                    f"{config.output_jsonl}:{line_number} has no string 'text' field."
+                )
+            if (
+                not isinstance(token_count, int)
+                or isinstance(token_count, bool)
+                or not config.min_document_tokens
+                <= token_count
+                <= config.max_document_tokens
+            ):
+                raise SystemExit(
+                    f"{config.output_jsonl}:{line_number} has invalid token_count "
+                    f"{token_count!r}; expected [{config.min_document_tokens}, "
+                    f"{config.max_document_tokens}]."
+                )
+            if text_digest(text) in excluded_digests:
+                excluded_documents += 1
+                excluded_tokens += token_count
+                continue
+            output_file.write(
+                json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+            )
+            documents += 1
+            tokens += token_count
+    audit = CorpusAudit(
+        documents=documents,
+        tokens=tokens,
+        excluded_documents=excluded_documents,
+        excluded_tokens=excluded_tokens,
+    )
+    return audit
+
+
+def repair_completed_output(config: DownloadConfig) -> None:
+    output_path = config.output_jsonl
+    partial_path = partial_path_for(output_path)
+    repairing_path = output_path.with_name(output_path.name + ".repairing")
+    backup_path = output_path.with_name(output_path.name + ".pre-disjoint-repair.bak")
+    if not output_path.exists():
+        raise SystemExit(f"Completed output does not exist: {output_path}")
+    if repairing_path.exists() or backup_path.exists():
+        raise SystemExit(
+            f"Repair scratch path already exists: "
+            f"{repairing_path if repairing_path.exists() else backup_path}"
+        )
+
+    excluded_digests = load_exclusion_digests(config.exclude_jsonl)
+    if partial_path.exists():
+        existing = load_partial_output(
+            partial_path,
+            min_document_tokens=config.min_document_tokens,
+            max_document_tokens=config.max_document_tokens,
+        )
+        overlap = excluded_digests.intersection(existing.digests)
+        if overlap:
+            raise SystemExit(
+                f"Existing repair partial still contains {len(overlap):,} excluded "
+                "documents; remove it before starting a new repair."
+            )
+        print(
+            f"Continuing prior repair partial with {existing.documents:,} documents "
+            f"and {existing.tokens:,} tokens."
+        )
+    else:
+        audit = write_repaired_partial(config, excluded_digests, repairing_path)
+        if not audit.excluded_documents:
+            repairing_path.unlink()
+            print("No excluded documents found; the completed output is already disjoint.")
+            return
+        os.replace(repairing_path, partial_path)
+        print(
+            f"Removed {audit.excluded_documents:,} excluded documents "
+            f"({audit.excluded_tokens:,} tokens); refilling from "
+            f"{audit.tokens:,} retained tokens."
+        )
+
+    os.replace(output_path, backup_path)
+    try:
+        download(config, resume=True, overwrite=False)
+    except BaseException:
+        if not output_path.exists() and backup_path.exists():
+            os.replace(backup_path, output_path)
+        print(
+            "Repair refill did not finish. The original completed output was "
+            "restored; rerun --repair-overlap to continue the clean partial."
+        )
+        raise
+    verify_completed_output(config)
+    backup_path.unlink()
+
+
 def prepare_output(
     config: DownloadConfig, *, resume: bool, overwrite: bool
 ) -> tuple[Path, ExistingOutput, str]:
@@ -328,7 +544,7 @@ def download(config: DownloadConfig, *, resume: bool, overwrite: bool) -> None:
     if partial_exclusions:
         raise SystemExit(
             f"Partial output contains {len(partial_exclusions):,} document(s) from "
-            "the configured embedding-data exclusions. Start again with --overwrite."
+            "the configured exclusions. Start again with --overwrite."
         )
     seen_digests = excluded_digests | existing.digests
     total_tokens = existing.tokens
@@ -404,6 +620,12 @@ def download(config: DownloadConfig, *, resume: bool, overwrite: bool) -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     config = load_config(args.config.resolve())
+    if args.verify:
+        verify_completed_output(config)
+        return
+    if args.repair_overlap:
+        repair_completed_output(config)
+        return
     download(config, resume=args.resume, overwrite=args.overwrite)
 
 
