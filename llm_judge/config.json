@@ -5,21 +5,22 @@
   "filters": [
     {
       "name": "philosophy_of_mind",
-      "prompt_path": "prompts/PhilosophyOfMindClassifier.txt"
+      "prompt_path": "llm_judge/prompts/PhilosophyOfMindClassifier.txt"
     },
     {
       "name": "reified_experience",
-      "prompt_path": "prompts/ReifiedExperienceClassifier.txt"
+      "prompt_path": "llm_judge/prompts/ReifiedExperienceClassifier.txt"
     },
     {
       "name": "experience_descriptions",
-      "prompt_path": "prompts/ExperienceDescriptionsClassifier.txt"
+      "prompt_path": "llm_judge/prompts/ExperienceDescriptionsClassifier.txt"
     }
   ],
-  "grading_instruction_path": "prompts/grading_instruction.txt",
+  "grading_instruction_path": "llm_judge/prompts/grading_instruction.txt",
   "models": [
     "google/gemma-4-31b-it",
-    "x-ai/grok-4.5"
+    "x-ai/grok-4.5",
+    "openai/gpt-5.6-luna"
   ],
   "openrouter": {
     "api_key_env": "OPENROUTER_API_KEY",
