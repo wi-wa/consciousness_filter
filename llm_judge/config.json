@@ -2,6 +2,7 @@
   "input_jsonl": "llm_judge/data/fineweb_edu_88k.jsonl",
   "output_jsonl": "llm_judge/data/fineweb_edu_88k_rated.jsonl",
   "hand_annotations_jsonl": "llm_judge/data/hand_annotated_samples.jsonl",
+  "hand_rated_jsonl": "llm_judge/data/hand_annotated_rated.jsonl",
   "filters": [
     {
       "name": "philosophy_of_mind",

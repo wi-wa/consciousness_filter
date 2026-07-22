@@ -47,7 +47,9 @@ Config keys:
   openrouter                   api_key_env, chat_url, app_title, http_referer
   request                      reasoning_effort, max_output_tokens, max_retries,
                                retry_base_delay_seconds, timeout_seconds
-  hand_annotations_jsonl      hand labels used by rerate_hand_annotated.py
+  hand_annotations_jsonl      hand labels; the document source of rate_hand_filter.py
+  hand_rated_jsonl            separate rated output written by rate_hand_filter.py;
+                              never read or written by this script
   run                          batch_size (documents persisted per update),
                                max_concurrent_requests (in-flight API calls),
                                max_documents (input boundary; null = all input)
@@ -113,6 +115,7 @@ class Config:
     input_jsonl: Path
     output_jsonl: Path
     hand_annotations_jsonl: Path
+    hand_rated_jsonl: Path
     filters: list[FilterSpec]
     grading_instruction: str
     models: list[str]
@@ -214,6 +217,10 @@ def load_config(config_path: Path) -> Config:
         hand_annotations_jsonl=resolve_repo_path(
             require(raw, "hand_annotations_jsonl", "top level"),
             "hand_annotations_jsonl",
+        ),
+        hand_rated_jsonl=resolve_repo_path(
+            require(raw, "hand_rated_jsonl", "top level"),
+            "hand_rated_jsonl",
         ),
         filters=filters,
         grading_instruction=grading_instruction,
@@ -629,26 +636,37 @@ def read_rated_dataset(path: Path) -> RatedDataset:
     return RatedDataset(raw_lines=raw_lines, rows=rows)
 
 
-def read_input_prefix(path: Path, limit: int | None) -> list[dict[str, Any]]:
+def read_input_prefix(
+    path: Path, limit: int | None, allow_blank_lines: bool = False
+) -> list[dict[str, Any]]:
+    """Read up to `limit` document rows.
+
+    `limit` counts documents, not file lines, so skipping blank lines cannot
+    change which documents fall inside the boundary.
+    """
     if not path.exists():
         raise SystemExit(f"Input JSONL does not exist: {path}")
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as input_file:
         for line_number, raw_line in enumerate(input_file, start=1):
-            if limit is not None and line_number > limit:
+            if limit is not None and len(rows) >= limit:
                 break
             if not raw_line.strip():
+                if allow_blank_lines:
+                    continue
                 raise SystemExit(f"Blank line at {path}:{line_number} would break alignment.")
             rows.append(parse_document_line(raw_line, path, line_number))
     return rows
 
 
-def load_main_scope(config: Config) -> MainScope:
+def load_main_scope(config: Config, allow_blank_input_lines: bool = False) -> MainScope:
     dataset = read_rated_dataset(config.output_jsonl)
     read_limit = config.max_documents
     if read_limit is not None:
         read_limit = max(read_limit, len(dataset.rows))
-    input_rows = read_input_prefix(config.input_jsonl, read_limit)
+    input_rows = read_input_prefix(
+        config.input_jsonl, read_limit, allow_blank_lines=allow_blank_input_lines
+    )
 
     if len(dataset.rows) > len(input_rows):
         raise SystemExit(
