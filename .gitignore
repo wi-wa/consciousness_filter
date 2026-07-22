@@ -10,6 +10,7 @@ llm_judge/data/*.jsonl.salvage
 llm_judge/data/*.jsonl.salvage.tmp
 !llm_judge/data/fineweb_edu_88k_rated.jsonl
 !llm_judge/data/hand_annotated_samples.jsonl
+!llm_judge/data/hand_annotated_rated.jsonl
 !llm_judge/data/hand_annotated_embedding_ratings.jsonl
 embedding_model/models/base_model/
 embedding_model/checkpoints/

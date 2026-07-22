@@ -8,10 +8,12 @@ Usage:
 
 The positional path must resolve inside ``embedding_model/checkpoints``. It may
 name a ``best``/``final`` checkpoint directory, its ``adapter`` directory, or a
-run directory (in which case ``best`` is selected). The hand annotations and
-live LLM-rated JSONL are always read-only. Hand rows are exact-matched, then
-200-character-prefix-matched, to the live rated rows so both kinds of judge
-score refer to the same document text. Results atomically replace:
+run directory (in which case ``best`` is selected). The hand annotations and the
+hand rated JSONL (llm_judge/scripts/rate_hand_filter.py) are always read-only.
+Hand rows are exact-matched, then 200-character-prefix-matched, to the hand
+rated rows so both kinds of judge score refer to the same document text, and so
+the viewer can merge this overlay onto the same rows. Results atomically
+replace:
 
     llm_judge/data/hand_annotated_embedding_ratings.jsonl
 
@@ -34,7 +36,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHECKPOINT_ROOT = REPO_ROOT / "embedding_model/checkpoints"
 HAND_ANNOTATIONS_PATH = REPO_ROOT / "llm_judge/data/hand_annotated_samples.jsonl"
-LIVE_RATED_PATH = REPO_ROOT / "llm_judge/data/fineweb_edu_88k_rated.jsonl"
+HAND_RATED_PATH = REPO_ROOT / "llm_judge/data/hand_annotated_rated.jsonl"
 OUTPUT_PATH = REPO_ROOT / "llm_judge/data/hand_annotated_embedding_ratings.jsonl"
 PREFIX_MATCH_CHARS = 200
 
@@ -164,14 +166,14 @@ def load_live_rated_rows(path: Path) -> list[dict[str, Any]]:
                 raise SystemExit(f"Missing non-empty 'text' at {path}:{line_number}.")
             rows.append(row)
     if not rows:
-        raise SystemExit(f"No live rated documents found in {path}.")
+        raise SystemExit(f"No hand rated documents found in {path}.")
     return rows
 
 
 def sync_annotations_to_live_rows(
     annotations: list[dict[str, Any]], live_rows: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], int, int]:
-    """Return annotation copies whose text exactly matches the live rated JSONL."""
+    """Return annotation copies whose text exactly matches the hand rated JSONL."""
     exact: dict[str, int] = {}
     prefix: dict[str, int] = {}
     for index, row in enumerate(live_rows):
@@ -198,7 +200,7 @@ def sync_annotations_to_live_rows(
             continue
         if live_index in used_live_indexes:
             raise SystemExit(
-                f"Multiple hand annotations match live rated line {live_index + 1}; "
+                f"Multiple hand annotations match hand rated line {live_index + 1}; "
                 "refusing to create ambiguous embedding ratings."
             )
         used_live_indexes.add(live_index)
@@ -211,8 +213,8 @@ def sync_annotations_to_live_rows(
         preview = ", ".join(str(line) for line in unmatched_lines[:10])
         suffix = "..." if len(unmatched_lines) > 10 else ""
         raise SystemExit(
-            f"{len(unmatched_lines)} hand annotations did not match the live rated file "
-            f"(hand lines {preview}{suffix}). No output was written."
+            f"{len(unmatched_lines)} hand annotations did not match the hand rated file "
+            f"(hand lines {preview}{suffix}); re-run rate_hand_filter.py. No output was written."
         )
     return synced, exact_matches, prefix_matches
 
@@ -479,7 +481,7 @@ def main() -> None:
     train_config = read_json_object(run_directory / "train_config.json", "training config")
     layout = parse_target_layout(checkpoint.get("target_names"))
     annotations = load_hand_annotations(HAND_ANNOTATIONS_PATH)
-    live_rows = load_live_rated_rows(LIVE_RATED_PATH)
+    live_rows = load_live_rated_rows(HAND_RATED_PATH)
     synced_annotations, exact_matches, prefix_matches = sync_annotations_to_live_rows(
         annotations, live_rows
     )
@@ -489,7 +491,7 @@ def main() -> None:
     print(f"Checkpoint: {checkpoint_directory}")
     print(f"Viewer judge: {model_name}")
     print(f"Hand annotations (read only): {HAND_ANNOTATIONS_PATH}")
-    print(f"Live LLM ratings (read only): {LIVE_RATED_PATH}")
+    print(f"Hand LLM ratings (read only): {HAND_RATED_PATH}")
     print(
         f"Synced hand documents: {len(synced_annotations)} "
         f"({exact_matches} exact, {prefix_matches} prefix)"

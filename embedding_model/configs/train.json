@@ -1,7 +1,8 @@
 {
   "data": {
     "rated_path": "embedding_model/data/fineweb_edu_88k_rated.jsonl",
-    "hand_annotations_path": "embedding_model/data/hand_annotated_samples.jsonl",
+    "hand_annotations_path": "llm_judge/data/hand_annotated_samples.jsonl",
+    "hand_rated_path": "llm_judge/data/hand_annotated_rated.jsonl",
     "rating_config_path": "llm_judge/config.json",
     "validation_fraction": 0.13,
     "prefix_match_chars": 200,

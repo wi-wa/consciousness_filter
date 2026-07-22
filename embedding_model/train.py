@@ -5,7 +5,12 @@ The script intentionally keeps the data and training loop small and explicit:
 
 * targets are the configured (filter, judge) ratings divided by 10;
 * hand-annotated documents are validation-only, but their LLM ratings are used;
-* another uniform random fraction of the rated corpus is held out;
+  they come from their own rated file (data.hand_rated_path, written by
+  llm_judge/scripts/rate_hand_filter.py) rather than from the corpus file;
+* any corpus row that is also a hand-annotated document is dropped from
+  training, so the two splits stay disjoint even though they now live in
+  separate files;
+* another uniform random fraction of the remaining rated corpus is held out;
 * ModernBERT is frozen except for LoRA adapters on its embedding, attention,
   and MLP matrices;
 * a zero-initialized linear head reads token position zero;
@@ -55,6 +60,12 @@ class Example:
     text: str
     targets: tuple[float, ...]
     source_line: int
+    origin: str = "rated"
+
+    @property
+    def example_id(self) -> str:
+        """Unique across files; source lines alone collide between them."""
+        return f"{self.origin}:{self.source_line}"
 
 
 @dataclass(frozen=True)
@@ -75,7 +86,9 @@ class PreparedData:
     matched_hand_rows: int
     unmatched_hand_rows: int
     random_validation_rows: int
-    human_labels_by_source_line: dict[int, tuple[int | None, ...]] = field(
+    hand_rated_rows: int = 0
+    excluded_overlap_rows: int = 0
+    human_labels_by_example_id: dict[str, tuple[int | None, ...]] = field(
         default_factory=dict
     )
     unique_training_examples: int = 0
@@ -388,10 +401,51 @@ def match_hand_annotations(
     return matched_labels, unmatched
 
 
+def read_rated_documents(
+    path: Path, filter_names: list[str], judge_names: list[str], origin: str
+) -> tuple[list[str], dict[int, Example], int]:
+    """Read a rated JSONL into (texts, complete examples by row, incomplete count)."""
+    texts: list[str] = []
+    examples_by_row: dict[int, Example] = {}
+    incomplete_rows = 0
+
+    try:
+        rated_file = path.open("r", encoding="utf-8")
+    except FileNotFoundError:
+        raise SystemExit(f"Rated data file does not exist: {path}") from None
+    with rated_file:
+        for line_number, line in enumerate(rated_file, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"Invalid JSON at {path}:{line_number}: {exc}") from exc
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str) or not text:
+                raise SystemExit(f"Missing non-empty 'text' at {path}:{line_number}.")
+            texts.append(text)
+            row_index = len(texts) - 1
+            targets = extract_targets(row, filter_names, judge_names)
+            if targets is None:
+                incomplete_rows += 1
+                continue
+            examples_by_row[row_index] = Example(
+                text=text,
+                targets=targets,
+                source_line=line_number,
+                origin=origin,
+            )
+    return texts, examples_by_row, incomplete_rows
+
+
 def prepare_data(config: dict[str, Any]) -> PreparedData:
     data_config = config["data"]
     rated_path = resolve_path(require(data_config, "rated_path", "data"), "data.rated_path")
     hand_path = resolve_path(require(data_config, "hand_annotations_path", "data"), "data.hand_annotations_path")
+    hand_rated_path = resolve_path(
+        require(data_config, "hand_rated_path", "data"), "data.hand_rated_path"
+    )
     rating_config_path = resolve_path(
         require(data_config, "rating_config_path", "data"), "data.rating_config_path"
     )
@@ -405,70 +459,75 @@ def prepare_data(config: dict[str, Any]) -> PreparedData:
 
     filter_names, judge_names, target_names = load_target_layout(rating_config_path)
     upsample_weights = load_upsample_weights(data_config, filter_names)
+
+    # The annotation file stays the source of truth for the human labels, so
+    # relabeling a document takes effect without re-running the hand rater.
     hand_annotations = read_hand_annotations(hand_path, filter_names)
-    rated_texts: list[str] = []
-    examples_by_row: dict[int, Example] = {}
-    incomplete_rows = 0
 
-    try:
-        rated_file = rated_path.open("r", encoding="utf-8")
-    except FileNotFoundError:
-        raise SystemExit(f"Rated data file does not exist: {rated_path}") from None
-    with rated_file:
-        for line_number, line in enumerate(rated_file, start=1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise SystemExit(f"Invalid JSON at {rated_path}:{line_number}: {exc}") from exc
-            text = row.get("text") if isinstance(row, dict) else None
-            if not isinstance(text, str) or not text:
-                raise SystemExit(f"Missing non-empty 'text' at {rated_path}:{line_number}.")
-            rated_texts.append(text)
-            row_index = len(rated_texts) - 1
-            targets = extract_targets(row, filter_names, judge_names)
-            if targets is None:
-                incomplete_rows += 1
-                continue
-            examples_by_row[row_index] = Example(text=text, targets=targets, source_line=line_number)
-
+    rated_texts, examples_by_row, incomplete_rows = read_rated_documents(
+        rated_path, filter_names, judge_names, origin="rated"
+    )
     if not rated_texts:
         raise SystemExit(f"No rated documents found in {rated_path}.")
     if not examples_by_row:
         raise SystemExit("No rows have a complete rating for every configured filter and judge.")
 
-    hand_labels_by_row, unmatched_hand_rows = match_hand_annotations(
-        hand_annotations, rated_texts, prefix_chars
+    hand_texts, hand_examples_by_row, incomplete_hand_rows = read_rated_documents(
+        hand_rated_path, filter_names, judge_names, origin="hand"
     )
-    hand_rows = set(hand_labels_by_row)
-    complete_hand_rows = hand_rows & examples_by_row.keys()
-    incomplete_hand_rows = len(hand_rows) - len(complete_hand_rows)
+    if not hand_texts:
+        raise SystemExit(
+            f"No hand-rated documents found in {hand_rated_path}. Run "
+            "llm_judge/scripts/rate_hand_filter.py first."
+        )
+
+    hand_labels_by_row, unmatched_hand_rows = match_hand_annotations(
+        hand_annotations, hand_texts, prefix_chars
+    )
+    hand_validation_rows = sorted(hand_examples_by_row)
     if incomplete_hand_rows:
         print(
-            f"WARNING: {incomplete_hand_rows} matched hand documents have incomplete "
+            f"WARNING: {incomplete_hand_rows} hand-rated documents have incomplete "
             "judge targets and cannot be used for validation.",
             file=sys.stderr,
         )
     if unmatched_hand_rows:
         print(
-            f"WARNING: {unmatched_hand_rows} hand documents are not present in the rated file yet.",
+            f"WARNING: {unmatched_hand_rows} hand annotations are not present in "
+            f"{hand_rated_path} yet; re-run rate_hand_filter.py.",
             file=sys.stderr,
         )
+    if not hand_validation_rows:
+        raise SystemExit(
+            f"No document in {hand_rated_path} has a complete rating for every "
+            "configured filter and judge."
+        )
 
-    eligible_rows = sorted(examples_by_row)
+    # Disjointness: a corpus row that is also a hand document is never trained
+    # on, whether or not it made it into the hand rated file. Both text sets are
+    # matched the same way the viewer does it: exact first, then long prefix.
+    overlap_rows, _ = match_hand_rows(
+        [annotation.text for annotation in hand_annotations] + hand_texts,
+        rated_texts,
+        prefix_chars,
+    )
+    eligible_rows = sorted(set(examples_by_row) - overlap_rows)
+    excluded_overlap_rows = len(overlap_rows & examples_by_row.keys())
+    if not eligible_rows:
+        raise SystemExit(
+            "Every complete corpus row is also a hand-annotated document; "
+            "there is nothing left to train on."
+        )
+
     random_validation_count = round(len(eligible_rows) * validation_fraction)
     if validation_fraction > 0.0 and random_validation_count == 0 and len(eligible_rows) > 1:
         random_validation_count = 1
     random_validation_rows = set(
         random.Random(seed).sample(eligible_rows, k=random_validation_count)
     )
-    validation_rows = complete_hand_rows | random_validation_rows
-    train_rows = set(eligible_rows) - validation_rows
+    train_rows = set(eligible_rows) - random_validation_rows
     if not train_rows:
         raise SystemExit("The validation split leaves no training examples.")
-    if not validation_rows:
-        raise SystemExit("The validation split contains no complete examples.")
 
     unique_training_examples = [
         examples_by_row[index] for index in sorted(train_rows)
@@ -480,20 +539,26 @@ def prepare_data(config: dict[str, Any]) -> PreparedData:
         upsample_weights,
     )
 
+    validation_examples = [hand_examples_by_row[index] for index in hand_validation_rows]
+    validation_examples += [examples_by_row[index] for index in sorted(random_validation_rows)]
+
     return PreparedData(
         train=training_examples,
-        validation=[examples_by_row[index] for index in sorted(validation_rows)],
+        validation=validation_examples,
         target_names=target_names,
         filter_names=filter_names,
         judge_names=judge_names,
         rated_rows=len(rated_texts),
         incomplete_rows=incomplete_rows,
-        matched_hand_rows=len(complete_hand_rows),
+        matched_hand_rows=len(hand_validation_rows),
         unmatched_hand_rows=unmatched_hand_rows + incomplete_hand_rows,
         random_validation_rows=len(random_validation_rows),
-        human_labels_by_source_line={
-            examples_by_row[index].source_line: hand_labels_by_row[index]
-            for index in complete_hand_rows
+        hand_rated_rows=len(hand_texts),
+        excluded_overlap_rows=excluded_overlap_rows,
+        human_labels_by_example_id={
+            hand_examples_by_row[index].example_id: hand_labels_by_row[index]
+            for index in hand_validation_rows
+            if index in hand_labels_by_row
         },
         unique_training_examples=len(unique_training_examples),
         upsampled_source_rows=upsampled_source_rows,
@@ -505,6 +570,8 @@ def print_data_summary(data: PreparedData) -> None:
     print(f"Rated rows read:       {data.rated_rows}")
     print(f"Complete target rows:  {data.rated_rows - data.incomplete_rows}")
     print(f"Incomplete rows skipped: {data.incomplete_rows}")
+    print(f"Hand-rated rows read:  {data.hand_rated_rows}")
+    print(f"Corpus rows excluded as hand documents: {data.excluded_overlap_rows}")
     unique_training_examples = data.unique_training_examples or len(data.train)
     print(f"Training examples:     {len(data.train)} (after upsampling)")
     print(f"  unique training rows:{unique_training_examples:>5}")
@@ -520,7 +587,7 @@ def print_data_summary(data: PreparedData) -> None:
         )
         print(f"  upsample weights:    {formatted_weights}")
     print(f"Validation examples:   {len(data.validation)}")
-    print(f"  matched hand rows:   {data.matched_hand_rows}")
+    print(f"  hand-rated rows:     {data.matched_hand_rows}")
     print(f"  random validation rows:{data.random_validation_rows:>5}")
     print(f"Unusable hand rows:    {data.unmatched_hand_rows}")
     print(f"Prediction targets:    {len(data.target_names)}")
@@ -640,16 +707,16 @@ def absolute_probability_errors(logits: Any, targets: Any) -> Any:
 def update_human_accuracy(
     tallies: dict[str, AccuracyTally],
     mean_probabilities: list[list[float]],
-    source_lines: list[int],
-    human_labels_by_source_line: dict[int, tuple[int | None, ...]],
+    example_ids: list[str],
+    human_labels_by_example_id: dict[str, tuple[int | None, ...]],
     filter_names: list[str],
 ) -> None:
     """Tally probabilistic correctness: p for label 1 and 1-p for label 0."""
-    if len(mean_probabilities) != len(source_lines):
-        raise ValueError("Each validation prediction row must have a source line.")
+    if len(mean_probabilities) != len(example_ids):
+        raise ValueError("Each validation prediction row must have an example id.")
 
-    for probabilities, source_line in zip(mean_probabilities, source_lines):
-        labels = human_labels_by_source_line.get(source_line)
+    for probabilities, example_id in zip(mean_probabilities, example_ids):
+        labels = human_labels_by_example_id.get(example_id)
         if labels is None:
             continue
         if len(probabilities) != len(filter_names) or len(labels) != len(filter_names):
@@ -918,10 +985,12 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
         "split": {
             "rated_rows": data.rated_rows,
             "incomplete_rows_skipped": data.incomplete_rows,
+            "hand_rated_rows": data.hand_rated_rows,
+            "corpus_rows_excluded_as_hand_documents": data.excluded_overlap_rows,
             "train_examples": len(data.train),
             "validation_examples": len(data.validation),
-            "matched_hand_validation_rows": data.matched_hand_rows,
-            "random_validation_rows_before_union": data.random_validation_rows,
+            "hand_validation_rows": data.matched_hand_rows,
+            "random_validation_rows": data.random_validation_rows,
             "unusable_hand_rows": data.unmatched_hand_rows,
         },
     }
@@ -945,7 +1014,7 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
         def __getitem__(self, index: int) -> Example:
             return self.examples[index]
 
-    def collate(examples: list[Example]) -> tuple[dict[str, Any], Any, list[int]]:
+    def collate(examples: list[Example]) -> tuple[dict[str, Any], Any, list[str]]:
         encoded = tokenizer(
             [example.text for example in examples],
             padding=True,
@@ -954,8 +1023,8 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
             return_tensors="pt",
         )
         targets = torch.tensor([example.targets for example in examples], dtype=torch.float32)
-        source_lines = [example.source_line for example in examples]
-        return dict(encoded), targets, source_lines
+        example_ids = [example.example_id for example in examples]
+        return dict(encoded), targets, example_ids
 
     batch_size = int(require(optimization, "batch_size", "optimization"))
     epochs = int(require(optimization, "epochs", "optimization"))
@@ -1084,7 +1153,7 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
             if filter_name in HUMAN_LABEL_FIELDS
         }
         with torch.no_grad():
-            for encoded, targets, source_lines in validation_loader:
+            for encoded, targets, example_ids in validation_loader:
                 encoded = {key: value.to(device, non_blocking=True) for key, value in encoded.items()}
                 targets = targets.to(device, non_blocking=True)
                 with autocast_context():
@@ -1111,8 +1180,8 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
                 update_human_accuracy(
                     human_accuracy,
                     mean_probabilities,
-                    source_lines,
-                    data.human_labels_by_source_line,
+                    example_ids,
+                    data.human_labels_by_example_id,
                     data.filter_names,
                 )
         encoder.train()
@@ -1205,7 +1274,7 @@ def train(config: dict[str, Any], data: PreparedData, config_path: Path) -> Path
     )
 
     for epoch in range(1, epochs + 1):
-        for encoded, targets, _source_lines in train_loader:
+        for encoded, targets, _example_ids in train_loader:
             global_step += 1
             encoded = {key: value.to(device, non_blocking=True) for key, value in encoded.items()}
             targets = targets.to(device, non_blocking=True)

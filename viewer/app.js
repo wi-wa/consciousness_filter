@@ -14,6 +14,10 @@ const LEGACY_FILTER = "philosophy_of_mind";
 const LEGACY_MODEL = "(legacy)";
 
 const CONFIG_URL = "../llm_judge/config.json";
+// The hand-label page is driven by the standalone hand rated file, which holds
+// the human labels and the judge ratings on the same row. The annotation file
+// is only a fallback, used when that file has not been generated yet.
+const HAND_RATED_URL = "../llm_judge/data/hand_annotated_rated.jsonl";
 const ANNOTATIONS_URL = "../llm_judge/data/hand_annotated_samples.jsonl";
 
 // Hand-annotation JSONL keys -> rated-output filter names.
@@ -37,11 +41,11 @@ const state = {
   disabledModels: new Set(), // models unchecked in the "Model agreement" box
   promptPaths: {}, // filter name -> prompt file path (from config.json)
   promptCache: {}, // filter name -> fetched prompt text
-  annotations: null, // lazy-loaded hand-annotated samples joined to documents
+  annotations: null, // lazy-loaded rows of the hand rated JSONL
 };
 
-// Resolves once the rated JSONL has loaded (or failed); the labels page waits
-// on this so hand-annotated samples can join against the documents.
+// Resolves once the corpus rated JSONL has loaded (or failed). Only the data
+// page depends on it; the hand-label page loads its own file.
 let documentsReady = Promise.resolve();
 
 const els = {
@@ -627,25 +631,39 @@ function humanTarget(label) {
   return label <= 1 ? label * 10 : label;
 }
 
-async function loadAnnotations() {
-  if (state.annotations) return state.annotations;
+// One row of the hand rated JSONL: the document, its human labels, and the
+// judge ratings the hand rater wrote onto the same row. Rows of the plain
+// annotation file parse the same way and simply carry no ratings.
+function parseHandRow(row) {
+  if (typeof row?.text !== "string" || row.text.length === 0) return null;
 
-  // Without the rated documents the join below matches nothing, so wait for
-  // them; if they failed to load, still show the hand labels on their own.
-  try {
-    await documentsReady;
-  } catch {}
-
-  const response = await fetch(`${ANNOTATIONS_URL}?t=${Date.now()}`);
-  if (!response.ok) {
-    throw new Error(`Could not load ${ANNOTATIONS_URL} (HTTP ${response.status}).`);
+  // Only the raw hand labels are stored here; means and diffs are computed
+  // at render time (filterAnnotationItems) so they track the model checkboxes.
+  const labels = [];
+  for (const { key, filter, short } of HUMAN_LABEL_FILTERS) {
+    const human = row[key];
+    if (!Number.isInteger(human) || human < 0) continue; // -1 = not yet labeled
+    labels.push({ filter, short, human });
   }
-  const text = await response.text();
+  return { text: row.text, labels, ratings: extractRatings(row) };
+}
 
-  const byText = new Map(state.documents.map((doc) => [doc.text, doc]));
-  const items = [];
+// Returns {rows, badLines}, or null when the file is not there at all.
+async function fetchHandRows(url) {
+  let response;
+  try {
+    response = await fetch(`${url}?t=${Date.now()}`);
+  } catch (error) {
+    throw new Error(`Could not load ${url}: ${error.message}`);
+  }
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Could not load ${url} (HTTP ${response.status}).`);
+  }
+
+  const rows = [];
   let badLines = 0;
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of (await response.text()).split(/\r?\n/)) {
     if (!line.trim()) continue;
     let row;
     try {
@@ -654,28 +672,74 @@ async function loadAnnotations() {
       badLines += 1;
       continue;
     }
-    if (typeof row?.text !== "string" || row.text.length === 0) continue;
+    const parsed = parseHandRow(row);
+    if (parsed) rows.push(parsed);
+  }
+  return { rows, badLines };
+}
 
-    let doc = byText.get(row.text) ?? null;
-    if (!doc) {
-      // Tolerate hand-edited tails: fall back to a long-prefix match.
-      const prefix = row.text.slice(0, 200);
-      doc = state.documents.find((d) => d.text.startsWith(prefix)) ?? null;
-    }
+// The hand page reads its own rated file, so it needs neither the corpus rated
+// JSONL nor any text matching against it.
+async function loadAnnotations() {
+  if (state.annotations) return state.annotations;
 
-    // Only the raw hand labels are stored here; means and diffs are computed
-    // at render time (filterAnnotationItems) so they track the model checkboxes.
-    const labels = [];
-    for (const { key, filter, short } of HUMAN_LABEL_FILTERS) {
-      const human = row[key];
-      if (!Number.isInteger(human) || human < 0) continue; // -1 = not yet labeled
-      labels.push({ filter, short, human });
+  let source = HAND_RATED_URL;
+  let loaded = await fetchHandRows(HAND_RATED_URL);
+  if (loaded === null || loaded.rows.length === 0) {
+    source = ANNOTATIONS_URL;
+    loaded = await fetchHandRows(ANNOTATIONS_URL);
+    if (loaded === null) {
+      throw new Error(
+        `Could not load ${HAND_RATED_URL} or ${ANNOTATIONS_URL} (HTTP 404).`,
+      );
     }
-    items.push({ annotationIndex: items.length, text: row.text, doc, labels });
   }
 
-  state.annotations = { items, badLines };
+  const items = loaded.rows.map((row, index) => ({
+    annotationIndex: index,
+    text: row.text,
+    // A row with no judge ratings yet gets no doc, which renders the
+    // "model reviews are unavailable" note instead of empty sections.
+    doc: Object.keys(row.ratings).length > 0
+      ? { text: row.text, ratings: row.ratings }
+      : null,
+    labels: row.labels,
+  }));
+
+  await mergeEmbeddingOverlays(items);
+
+  state.annotations = { items, badLines: loaded.badLines, source };
   return state.annotations;
+}
+
+// Separately generated embedding-model ratings are merged onto the hand rows so
+// the distilled model can be compared against the judges and your labels.
+async function mergeEmbeddingOverlays(items) {
+  const documents = items.filter((item) => item.doc).map((item) => item.doc);
+  if (documents.length === 0) return;
+
+  for (const overlayUrl of RATING_OVERLAY_URLS) {
+    try {
+      const response = await fetch(`${overlayUrl}?t=${Date.now()}`);
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.warn(`Could not load rating overlay ${overlayUrl}: HTTP ${response.status}`);
+        }
+        continue;
+      }
+      const result = mergeRatingOverlay(documents, parseJsonl(await response.text()));
+      if (result.collisions > 0) {
+        console.warn(
+          `Skipped ${result.collisions} overlay rating collision(s) from ${overlayUrl}; existing ratings were preserved.`,
+        );
+      }
+      console.info(
+        `Merged ${result.addedRatings} hand ratings from ${result.matchedRows} rows in ${overlayUrl}.`,
+      );
+    } catch (error) {
+      console.warn(`Could not load rating overlay ${overlayUrl}: ${error.message}`);
+    }
+  }
 }
 
 function buildAnnotationItem(item) {
@@ -1107,7 +1171,7 @@ function renderModelStats(items) {
     const empty = document.createElement("div");
     empty.className = "ann-note";
     empty.textContent =
-      "No model ratings for this filter yet. Run llm_judge/scripts/rerate_hand_annotated.py " +
+      "No model ratings for this filter yet. Run llm_judge/scripts/rate_hand_filter.py " +
       "to rate the hand-annotated samples, then reload.";
     els.modelStatsList.replaceChildren(empty);
     return;
@@ -1273,7 +1337,7 @@ async function renderLabelsPage() {
     els.modelStatsList.textContent = "Loading…";
   }
   try {
-    const { items, badLines } = await loadAnnotations();
+    const { items, badLines, source } = await loadAnnotations();
     if (token !== labelsRenderToken) return; // superseded by a newer render
     const shown = filterAnnotationItems(items, state.labelsFilter);
     state.labelsItems = shown;
@@ -1289,7 +1353,7 @@ async function renderLabelsPage() {
     if (badLines > 0) {
       const note = document.createElement("div");
       note.className = "ann-note";
-      note.textContent = `${badLines} line${badLines === 1 ? "" : "s"} in ${ANNOTATIONS_URL} could not be parsed and ${badLines === 1 ? "was" : "were"} skipped.`;
+      note.textContent = `${badLines} line${badLines === 1 ? "" : "s"} in ${source} could not be parsed and ${badLines === 1 ? "was" : "were"} skipped.`;
       els.labelsBody.prepend(note);
     }
   } catch (error) {
@@ -1301,7 +1365,10 @@ async function renderLabelsPage() {
     els.overallValue.textContent = "–";
     els.overallN.textContent = "";
     els.accuracyList.replaceChildren();
-    els.labelsBody.textContent = `${error.message}\n\nMake sure ${ANNOTATIONS_URL} exists and the repository root is being served.`;
+    els.labelsBody.textContent =
+      `${error.message}\n\nGenerate ${HAND_RATED_URL} with ` +
+      "llm_judge/scripts/rate_hand_filter.py (or make sure " +
+      `${ANNOTATIONS_URL} exists), and serve the repository root.`;
   }
 }
 

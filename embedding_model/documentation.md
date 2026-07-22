@@ -1,14 +1,28 @@
 Trains embedding model to reproduce the LLM-judges
 
 Data input:
-    consciousness_filter/embedding_model/data/fineweb_edu_88k_rated.jsonl
-    consciousness_filter/embedding_model/data/hand_annotated_samples.jsonl
+    data.rated_path             the LLM-rated corpus (fineweb_edu_88k_rated.jsonl)
+    data.hand_rated_path        llm_judge/data/hand_annotated_rated.jsonl
+                                    written by llm_judge/scripts/rate_hand_filter.py
+                                    one row per hand-annotated document, carrying both
+                                    the human labels and the LLM judge ratings
+    data.hand_annotations_path  llm_judge/data/hand_annotated_samples.jsonl
+                                    source of truth for the human labels, so relabeling
+                                    takes effect without re-running the hand rater
 
     Creates:
-        validation set = hand_annotated samples + the configured uniformly random fraction of fineweb_edu_88k_rated
-        train set = fineweb_edu_88k_rated - validation set
+        validation set = every hand_rated row with complete judge targets
+                         + the configured uniformly random fraction of the remaining rated corpus
+        train set = rated corpus - hand documents - random validation rows
 
         Note: the validation set contains the hand_annotated samples, but uses the LLM judges ratings on those samples
+
+    Disjointness:
+        The hand documents live in their own file now, so a copy of one may also sit in the
+        rated corpus. Any corpus row matching a hand document - exactly, or on the first
+        data.prefix_match_chars characters - is dropped from training. The exclusion uses
+        every hand annotation, including ones the hand rater has not rated yet, so a
+        partially rated hand file can never leak into training.
 
     Training-only upsampling:
         data.upsample_mult defines an integer weight for every filter
