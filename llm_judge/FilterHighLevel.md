@@ -28,8 +28,6 @@ This opens up a more indirect route of gathering evidence. We can scrub the data
 
 Unfortunately “sufficiently similar” is hard to make precise. In LLMs all behaviors are ultimately downstream of their training data, so there is a tradeoff:
 
-34
-
 - A broader definition of similarity means the model has to generalize further from the pretraining distribution, making the evidence we’d get stronger.
 - But a broader definition also removes more useful/relevant knowledge from the model, making the inferential leap greater, making it harder to pose our evaluations/questions to the model in a way it will understand.
 
